@@ -16,7 +16,7 @@ import torch.nn.functional as F
 from torch.distributions import Bernoulli
 from torch.autograd import grad
 import random
-def one_epoch_train(model,optimizer,trainMatrix, epoch, args):
+def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
     '''Train a model
 
     After having run the model on every input of the train set,
@@ -46,11 +46,21 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args):
             loss = model(data)
             loss.backward()
             return loss
-
         optimizer.step(closure)
+        optimizer.zero_grad()
+    elif args.optim == "NEWTON":
+        hessDiagList,gradientList = computeHessDiagList(loss,model)
+
+        annot_bias = model.annot_bias-lr*gradientList[0]/hessDiagList[0]
+        annot_incons = model.annot_incons-lr*gradientList[1]/hessDiagList[1]
+        video_amb = model.video_amb-lr*gradientList[2]/hessDiagList[2]
+        video_scor = model.video_scor-lr*gradientList[3]/hessDiagList[3]
+
+        model.setParams(annot_bias,annot_incons,video_amb,video_scor)
+
     else:
         optimizer.step()
-    optimizer.zero_grad()
+        optimizer.zero_grad()
 
     train_loss = loss
 
@@ -91,22 +101,24 @@ def computeHessDiag(loss,tensor):
     hessDiag = torch.zeros_like(tensor)
     for i,first_deriv in enumerate(gradient):
         hessDiag[i] = grad(first_deriv, tensor, create_graph=True)[0][i]
-    return hessDiag
+    return hessDiag,gradient
 
 def computeHessDiagList(loss, model):
 
     hessDiagList = []
+    gradientList = []
     for tensor in model.parameters():
-        print("Computing second order derivative for ",tensor.size())
+        #print("Computing second order derivative for ",tensor.size())
 
-        hessDiag = computeHessDiag(loss,tensor)
+        hessDiag,gradient = computeHessDiag(loss,tensor)
         hessDiagList.append(hessDiag)
+        gradientList.append(gradient)
 
-    return hessDiagList
+    return hessDiagList,gradientList
 
 def computeConfInter(loss,model):
 
-    hessDiagList = computeHessDiagList(loss,model)
+    hessDiagList,gradList = computeHessDiagList(loss,model)
     confInterList = []
 
     for hessDiag in hessDiagList:
@@ -132,25 +144,27 @@ def plotMLE(loss,model,exp_id,epoch,mos_mean,mos_std):
         plt.xlabel("Individual")
         plt.ylabel("MLE")
 
-        #plt.plot(model.state_dict()[key].numpy())
-        values = model.state_dict()[key].numpy()
+        if model.state_dict()[key].is_cuda:
+            values = model.state_dict()[key].cpu().numpy()
+            yErrors = confInterList[i].cpu().detach().numpy()
+        else:
+            values = model.state_dict()[key].numpy()
+            yErrors = confInterList[i].detach().numpy()
+
         if key =="video_amb":
             values = np.abs(values)
-
-        yErrors = confInterList[i].detach().numpy()
 
         plt.errorbar([i for i in range(len(values))],values, yerr=yErrors, fmt="*")
 
         if key == "video_scor":
             plt.errorbar([i+0.5 for i in range(len(values))],mos_mean, yerr=mos_std, fmt="*")
 
-
         plt.savefig("../vis/{}/{}_epoch{}.png".format(exp_id,key,epoch))
 
 def get_OptimConstructor(optimStr,momentum):
     '''Return the apropriate constructor and keyword dictionnary for the choosen optimiser
     Args:
-        optimStr (str): the name of the optimiser. Can only be \'GD\' for now.
+        optimStr (str): the name of the optimiser. Can only be \'GD\', \'LBFGS\' or \'NEWTON\'.
     Returns:
         the constructor of the choosen optimiser and the apropriate keyword dictionnary
     '''
@@ -160,6 +174,10 @@ def get_OptimConstructor(optimStr,momentum):
         kwargs= {'momentum': momentum}
     elif optimStr == "LBFGS":
         optimConst = optim.LBFGS
+        kwargs = {"history_size":1000,"max_iter":40}
+
+    elif optimStr=="NEWTON":
+        optimConst = None
         kwargs = {}
     else:
         raise ValueError("Unknown optimisation algorithm : {}.".format(args.optim))
@@ -181,7 +199,6 @@ def train(model,optimConst,kwargs,trainSet, args):
 
         if epoch%400==0:
             print("\tEpoch : ",epoch,"dist",float(dist))
-            #print(model.video_scor.detach().numpy())
 
         #This condition determines when the learning rate should be updated (to follow the learning rate schedule)
         #The optimiser have to be rebuilt every time the learning rate is updated
@@ -189,20 +206,22 @@ def train(model,optimConst,kwargs,trainSet, args):
 
             kwargs['lr'] = args.lr[lrCounter]
             #print("Learning rate : ",kwargs['lr'])
-            optimizer = optimConst(model.parameters(), **kwargs)
-
+            if optimConst:
+                optimizer = optimConst(model.parameters(), **kwargs)
+            else:
+                optimizer = None
             if lrCounter<len(args.lr)-1:
                 lrCounter += 1
 
         old_score = model.state_dict()["video_scor"].clone()
-        loss = one_epoch_train(model,optimizer,trainSet,epoch, args)
+        loss = one_epoch_train(model,optimizer,trainSet,epoch, args,args.lr[lrCounter])
 
 
         dist = torch.sqrt(torch.pow(old_score-model.state_dict()["video_scor"],2).sum())
         epoch += 1
 
     print("\tStopped at epoch ",epoch)
-    return loss
+    return loss,epoch
 
 def computeBaselines(trainSet):
     mos_mean,mos_std = modelBuilder.MOS(trainSet,sub_rej=False,z_score=False)
@@ -213,14 +232,18 @@ def computeBaselines(trainSet):
 
 def mean_std(model,loss):
     mle_mean = model.video_scor
-    mle_std = 1.96/torch.sqrt(computeHessDiag(loss,mle_mean))
+    mle_std = 1.96/torch.sqrt(computeHessDiag(loss,mle_mean)[0])
     return mle_mean,mle_std
 
 def RMSE(vec_ref,vec):
 
     if not (type(vec) is np.ndarray):
+        if vec.is_cuda:
+            vec = vec.cpu()
         vec = vec.detach().numpy()
     if not (type(vec_ref) is np.ndarray):
+        if vec_ref.is_cuda:
+            vec_ref = vec_ref.cpu()
         vec_ref = vec_ref.detach().numpy()
 
     sq_sum = np.power(vec_ref-vec,2).sum()
@@ -230,58 +253,70 @@ def RMSE(vec_ref,vec):
     #print(sq_sum)
     return np.sqrt(sq_sum/len(vec))
 
-def converSpeed(model,trainSet,distorNbList,args,nbRep=1,nb_annot_min=11):
+def deteriorateData(trainSet,nb_annot,nb_corr):
+
+    data = trainSet.clone()
+    nb_annot = int(nb_annot)
+    nb_corr = int(nb_corr)
+
+    #Remove annotators
+    if nb_annot < data.size(1):
+        annotToRemove = random.sample(range(data.size(1)),data.size(1)-nb_annot)
+        data = modelBuilder.removeColumns(data,annotToRemove)
+
+    #Randomly scramble subject scores
+    if nb_corr > 0:
+        annotToScramble = random.sample(range(nb_annot),nb_corr)
+        data = modelBuilder.scrambleColumns(data,annotToScramble)
+
+    return data
+
+def robustness(model,trainSet,distorNbList,args,paramRange,paramName,corrKwargs,nbRep=100):
 
     #Getting the contructor and the kwargs for the choosen optimizer
     optimConst,kwargs = get_OptimConstructor(args.optim,args.momentum)
 
     model = modelBuilder.modelMaker(int(args.annot_nb),len(trainSet),distorNbList)
-    loss = train(model,optimConst,kwargs,trainSet, args)
+    loss,_ = train(model,optimConst,kwargs,trainSet, args)
 
     mle_mean_ref,_ = mean_std(model,loss)
     mos_mean_ref,sr_mean_ref,zs_sr_mean_ref = computeBaselines(trainSet)[:3]
 
-    mle_err = np.zeros((trainSet.size(1)-nb_annot_min))
-    mos_err = np.zeros((trainSet.size(1)-nb_annot_min))
-    sr_err = np.zeros((trainSet.size(1)-nb_annot_min))
-    zs_sr_err = np.zeros((trainSet.size(1)-nb_annot_min))
+    valueNumber = max(paramRange)-min(paramRange)
+    mle_err = np.zeros((valueNumber,nbRep))
+    mos_err = np.zeros((valueNumber,nbRep))
+    sr_err = np.zeros((valueNumber,nbRep))
+    zs_sr_err = np.zeros((valueNumber,nbRep))
 
-    rangeAnnot = range(nb_annot_min,trainSet.size(1))
     #print(args.erase_results)
     if (not os.path.exists("../results/{}/mle_err_epoch{}.csv".format(args.exp_id,args.epochs))) or args.erase_results:
-        for i,nb_annot in enumerate(rangeAnnot):
+        for i,paramValue in enumerate(paramRange):
 
             if i%5==0:
-                print("Annot Nb :",nb_annot,"/",trainSet.size(1))
+                print(paramName,":",paramValue,"/",max(paramRange))
             for j in range(nbRep):
 
-                annotToRemove = random.sample(range(trainSet.size(1)),trainSet.size(1)-nb_annot)
-                dataRm = modelBuilder.removeColumns(trainSet,annotToRemove)
-                model = modelBuilder.modelMaker(nb_annot,len(dataRm),distorNbList)
-                loss = train(model,optimConst,kwargs,dataRm, args)
+                corrKwargs[paramName] = paramValue
+
+                #Randomly remove or scramble annotator scores
+                data = deteriorateData(trainSet,**corrKwargs)
+
+                model = modelBuilder.modelMaker(int(corrKwargs["nb_annot"]),len(data),distorNbList)
+                loss,_ = train(model,optimConst,kwargs,data, args)
 
                 mle_mean,_ = mean_std(model,loss)
-                mos_mean,sr_mean,zs_sr_mean = computeBaselines(dataRm)[:3]
+                mos_mean,sr_mean,zs_sr_mean = computeBaselines(data)[:3]
 
-
-                mle_rmse = RMSE(mle_mean_ref,mle_mean)
-                mle_err[i] += mle_rmse
-                #mos_err[i] += RMSE(mos_mean_ref,mos_mean)
-                #sr_err[i] += RMSE(sr_mean_ref,sr_mean)
-                #zs_sr_err[i] += RMSE(zs_sr_mean_ref,zs_sr_mean)
-
-
-            mle_err[i] /= nbRep
-
-            mos_err[i] /= nbRep
-            sr_err[i] /= nbRep
-            zs_sr_err[i] /= nbRep
+                mle_err[i,j] = RMSE(mle_mean_ref,mle_mean)
+                mos_err[i,j] = RMSE(mos_mean_ref,mos_mean)
+                sr_err[i,j] = RMSE(sr_mean_ref,sr_mean)
+                zs_sr_err[i,j] = RMSE(zs_sr_mean_ref,zs_sr_mean)
 
             #sys.exit(0)
-        np.savetxt("../results/{}/mle_err_epoch{}.csv".format(args.exp_id,args.epochs),mle_err)
-        np.savetxt("../results/{}/mos_err_epoch{}.csv".format(args.exp_id,args.epochs),mos_err)
-        np.savetxt("../results/{}/sr_err_epoch{}.csv".format(args.exp_id,args.epochs),sr_err)
-        np.savetxt("../results/{}/zs_sr_err_epoch{}.csv".format(args.exp_id,args.epochs),zs_sr_err)
+        np.savetxt("../results/{}/mle_err_epoch{}_model{}.csv".format(args.exp_id,args.epochs,args.ind_id),mle_err)
+        np.savetxt("../results/{}/mos_err_epoch{}_model{}.csv".format(args.exp_id,args.epochs,args.ind_id),mos_err)
+        np.savetxt("../results/{}/sr_err_epoch{}_model{}.csv".format(args.exp_id,args.epochs,args.ind_id),sr_err)
+        np.savetxt("../results/{}/zs_sr_err_epoch{}_model{}.csv".format(args.exp_id,args.epochs,args.ind_id),zs_sr_err)
 
     else:
         mle_err = np.genfromtxt("../results/{}/mle_err_epoch{}.csv".format(args.exp_id,args.epochs))
@@ -290,22 +325,20 @@ def converSpeed(model,trainSet,distorNbList,args,nbRep=1,nb_annot_min=11):
         zs_sr_err = np.genfromtxt("../results/{}/zs_sr_err_epoch{}.csv".format(args.exp_id,args.epochs))
 
     plt.figure()
-    plt.plot(rangeAnnot,mle_err,label="MLE")
-    plt.plot(rangeAnnot,mos_err,label="MOS")
-    plt.plot(rangeAnnot,sr_err,label="SR-MOS")
-    plt.plot(rangeAnnot,zs_sr_err,label="ZS-SR-MOS")
+    #rangeAnnot = np.array(rangeAnnot)
+    plt.errorbar(paramRange,mos_err.mean(axis=1), yerr=1.96*mos_err.std(axis=1)/np.sqrt(nbRep),label="MOS")
+    plt.errorbar(paramRange,sr_err.mean(axis=1), yerr=1.96*sr_err.std(axis=1)/np.sqrt(nbRep),label="SR-MOS")
+    plt.errorbar(paramRange,zs_sr_err.mean(axis=1), yerr=1.96*zs_sr_err.std(axis=1)/np.sqrt(nbRep),label="ZS-SR-MOS")
+    plt.errorbar(paramRange,mle_err.mean(axis=1), yerr=1.96*mle_err.std(axis=1)/np.sqrt(nbRep),label="MLE")
     plt.legend()
 
-    plt.savefig("../vis/{}/conv_spee_epoch{}.png".format(args.exp_id,args.epochs))
+    plt.savefig("../vis/{}/robustness_epoch{}_model{}.png".format(args.exp_id,args.epochs,args.ind_id))
 
 def main(argv=None):
 
     #Getting arguments from config file and command line
     #Building the arg reader
     argreader = ArgReader(argv)
-
-    argreader.parser.add_argument('--optim', type=str, default="LBFGS", metavar='OPTIM',
-                        help='the optimizer algorithm to use (default: \'LBFGS\')')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -317,6 +350,8 @@ def main(argv=None):
     random.seed(args.seed)
 
     trainSet,distorNbList = load_data.loadData(args.dataset,int(args.annot_nb))
+    if args.cuda:
+        trainSet = trainSet.cuda()
 
     #The group of class to detect
     np.random.seed(args.seed)
@@ -336,6 +371,8 @@ def main(argv=None):
 
     #Building the model
     model = modelBuilder.modelMaker(int(args.annot_nb),len(trainSet),distorNbList)
+    if args.cuda:
+        model = model.cuda()
     torch.save(model.state_dict(), "../models/{}/{}{}_epoch0".format(args.exp_id,modelType,args.ind_id))
 
     #Getting the contructor and the kwargs for the choosen optimizer
@@ -347,9 +384,12 @@ def main(argv=None):
     if type(args.lr) is float:
         args.lr = [args.lr]
 
-    converSpeed(model,trainSet,distorNbList,args)
-    #loss = train(model,optimConst,kwargs,trainSet, args)
-    #mos_mean,mos_std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=True)
+    paramRange = range(args.param_min,args.param_max)
+    corrKwargs = {"nb_annot":args.annot_nb,"nb_corr":0}
+
+    robustness(model,trainSet,distorNbList,args,paramRange,args.param_name,corrKwargs,args.nb_rep)
+    #loss,epoch = train(model,optimConst,kwargs,trainSet, args)
+    #mos_mean,mos_std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=False)
     #plotMLE(loss,model,args.exp_id,epoch,mos_mean,mos_std)
 
 if __name__ == "__main__":
