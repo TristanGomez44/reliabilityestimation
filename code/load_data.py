@@ -6,14 +6,14 @@ import glob
 import json
 import os
 
-def readCSV(path,annotNb, seed=0):
+def readCSV(path, seed=0):
 
     np.random.seed(seed)
     torch.manual_seed(seed)
 
     csv = np.genfromtxt(path,dtype="str")[1:]
     distorNbList = countNbDistor(csv)
-    trainSet = csv[:,2:2+annotNb]
+    trainSet = csv[:,2:]
 
     return trainSet.astype(int),distorNbList
 def countNbDistor(dataset):
@@ -31,22 +31,21 @@ def countNbDistor(dataset):
     distorNbList.append(currentNbdistor)
     return distorNbList
 
-def loadData(dataset,annotNb):
+def loadData(dataset):
     ''' Build three dataloader : one for train, one for validation and one for test
 
     Args:
-        dataset (string): the name of the dataset. Can only be \'IRCCYN\' for now.
-        annotNb (int) : the number of annotator to use
+        dataset (string): the name of the dataset. Can be \'IRCCYN\', \'NETFLIX\' or \'VQEG\'.
     Returns:
         train_loader (torch.Tensor): the matrix for training
-        test_loader (torch.Tensor): the matrix for testing
-
     '''
 
     if dataset  == "IRCCYN":
-        trainSet,distorNbList = readCSV("../data/scores_irccyn.csv",annotNb)
+        trainSet,distorNbList = readCSV("../data/scores_irccyn.csv")
     elif dataset  == "NETFLIX":
-        trainSet,distorNbList = readCSV("../data/scores_netflix.csv",annotNb)
+        trainSet,distorNbList = readCSV("../data/scores_netflix.csv")
+    elif dataset == "VQEG":
+        trainSet,distorNbList = readCSV("../data/scores_vqeg.csv")
     else:
         raise ValueError("Unknown dataset",dataset)
 
