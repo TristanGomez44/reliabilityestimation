@@ -12,18 +12,19 @@ from scipy.stats import moment
 class MLE(nn.Module):
     ''' Implement the model proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
 
-    def __init__(self,videoNb,contentNb,annotNb,distorNbList):
+    def __init__(self,videoNb,contentNb,annotNb,distorNbList,polyDeg):
 
         super(MLE, self).__init__()
 
         self.annot_bias  = nn.Parameter(torch.ones(annotNb))
         self.annot_incons  = nn.Parameter(torch.ones(annotNb))
-        self.video_amb  = nn.Parameter(torch.ones(contentNb))
+        self.video_amb  = nn.Parameter(torch.ones(contentNb,polyDeg+1))
         self.video_scor  = nn.Parameter(torch.ones(videoNb))
         self.annotNb = annotNb
         self.videoNb = videoNb
         self.contentNb = contentNb
 
+        self.polyDeg = polyDeg
         self.distorNbList = distorNbList
 
     def forward(self,xInt):
@@ -34,10 +35,19 @@ class MLE(nn.Module):
         #amb = self.video_amb.unsqueeze(1).expand(self.contentNb, self.distorNb).contiguous().view(-1)
         tmp = []
         for i in range(self.contentNb):
-            tmp.append(self.video_amb[i].unsqueeze(0).expand(self.distorNbList[i]))
+            tmp.append(self.video_amb[i].unsqueeze(1).expand(self.polyDeg+1,self.distorNbList[i]))
 
-        amb = torch.cat(tmp,dim=0)
-        amb_sq = torch.pow(amb,2)
+        amb = torch.cat(tmp,dim=1).permute(1,0)
+        #amb = amb.expand(amb.size(0),self.polyDeg)
+        #print(amb.size())
+
+        vid_means = x.mean(dim=1)
+        vid_means = vid_means.unsqueeze(1).expand(vid_means.size(0),self.polyDeg+1)
+        powers = torch.arange(self.polyDeg+1).unsqueeze(1).permute(1,0).expand(vid_means.size(0),self.polyDeg+1)
+        vid_means_pow = torch.pow(vid_means,powers)
+        amb_pol = (amb*vid_means_pow).sum(dim=1)
+
+        amb_sq = torch.pow(amb_pol,2)
         amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
         incon_sq = torch.pow(self.annot_incons,2)
         incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
@@ -74,7 +84,7 @@ class MLE(nn.Module):
         #data3D = data.view(self.distorNb,self.contentNb,self.annotNb).permute(1,0,2)
         data3D = []
         currInd = 0
-        video_ambTensor = torch.ones(self.contentNb)
+        video_ambTensor = torch.zeros(self.contentNb,self.polyDeg+1)
 
         if dataInt.is_cuda:
             annot_bias = annot_bias.cuda()
@@ -89,11 +99,11 @@ class MLE(nn.Module):
             currInd += self.distorNbList[i]
 
             expanded_use_score_mean = data.mean(dim=0).unsqueeze(1).permute(1, 0).expand_as(videoData)
-            video_ambTensor[i] = torch.pow(videoData-expanded_use_score_mean,2).sum()/(self.annotNb*self.contentNb)
-            video_ambTensor[i] = torch.sqrt(video_ambTensor[i])
+            video_ambTensor[i,0] = torch.pow(videoData-expanded_use_score_mean,2).sum()/(self.annotNb*self.contentNb)
+            video_ambTensor[i,0] = torch.sqrt(video_ambTensor[i,0])
+
 
         self.setParams(annot_bias,annot_incons,video_ambTensor,vid_score)
-
 
 def subRej(dataTorch):
 
@@ -141,14 +151,16 @@ def removeColumns(data,removeList):
 
 def scrambleColumns(data,annotToScramble):
 
-    data_scr = torch.zeros(data.size())
+    data_scr = data.clone()
 
-    randomScores = torch.randint(1,6,(data.size(0),len(annotToScramble)))
+    randomScores = torch.zeros((data.size(0),len(annotToScramble))).int().random_(1,6)
+    #print(randomScores)
     c=0
     for i in range(len(data)):
         if i in annotToScramble:
             data_scr[:,i] = randomScores[:,c]
             c += 1
+    #print(data_scr)
     return data_scr
 
 def MOS(dataInt,z_score,sub_rej):
@@ -177,7 +189,7 @@ def MOS(dataInt,z_score,sub_rej):
 
     return mos_mean.numpy(),mos_conf.numpy()
 
-def modelMaker(annot_nb,nbVideos,distorNbList):
+def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg):
     '''Build a model
     Args:
         annot_nb (int): the bumber of annotators
@@ -187,7 +199,7 @@ def modelMaker(annot_nb,nbVideos,distorNbList):
         the built model
     '''
 
-    model = MLE(nbVideos,len(distorNbList),annot_nb,distorNbList)
+    model = MLE(nbVideos,len(distorNbList),annot_nb,distorNbList,polyDeg)
     return model
 
 if __name__ == '__main__':
