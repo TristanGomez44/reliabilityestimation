@@ -101,10 +101,12 @@ class ArgReader():
                             help='the id of the individual')
         self.parser.add_argument('--exp_id', type=str, metavar='EXP_ID',
                             help='the id of the experience')
-        self.parser.add_argument('--dataset', type=str, metavar='N',help='the dataset to use. Can be \'NETFLIX\' or \'IRCCYN\'')
+        self.parser.add_argument('--dataset', type=str, metavar='N',help='the dataset to use. Can be \'NETFLIX\', \'IRCCYN\' or \'VQEG\'.')
 
-        self.parser.add_argument('--annotNb', type=int, metavar='S',
-                            help='The number of annotator in the dataset')
+
+        self.parser.add_argument('--poly_deg', type=int, metavar='S',
+                            help='The polynomial degree to use to model video ambiguity as a function of video mean score')
+
         self.parser.add_argument('--erase_results', type=str2bool, metavar='S',
                             help='To erase the convergence speed results already computed')
         self.parser.add_argument('--cuda', type=str2bool, metavar='S',
