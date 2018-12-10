@@ -16,6 +16,18 @@ import torch.nn.functional as F
 from torch.distributions import Bernoulli
 from torch.autograd import grad
 import random
+
+def addLossTerms(loss,model,args):
+
+    hessDiagList,_ = computeHessDiagList(loss,model)
+
+    hessDiagList[2] = hessDiagList[2].view(-1)
+
+    if args.scnd_order_weight > 0:
+        loss -= args.scnd_order_weight*torch.cat(hessDiagList,dim=0).sum()
+
+    return loss
+
 def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
     '''Train a model
 
@@ -38,6 +50,8 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
     neg_log_proba = model(data)
 
     loss = neg_log_proba
+
+    loss = addLossTerms(loss,model,args)
 
     loss.backward(retain_graph=True)
 
@@ -179,6 +193,7 @@ def main(argv=None):
     #Building the arg reader
     argreader = ArgReader(argv)
 
+
     #Reading the comand line arg
     argreader.getRemainingArgs()
 
@@ -188,8 +203,6 @@ def main(argv=None):
     torch.manual_seed(args.seed)
     random.seed(args.seed)
 
-    if args.cuda:
-        trainSet = trainSet.cuda()
 
     #The group of class to detect
     np.random.seed(args.seed)
@@ -207,6 +220,9 @@ def main(argv=None):
 
     #Loading data
     trainSet,distorNbList = load_data.loadData(args.dataset)
+
+    if args.cuda:
+        trainSet = trainSet.cuda()
 
     #Building the model
     model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg)

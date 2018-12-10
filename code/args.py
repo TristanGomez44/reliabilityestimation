@@ -125,6 +125,10 @@ class ArgReader():
         self.parser.add_argument('--nb_rep', type=int, metavar='S',
                             help='The number of repetition for each parameter value')
 
+        self.parser.add_argument('--scnd_order_weight', type=float,metavar='S',
+                        help='The weight of the second order derivative term in the loss function')
+
+
         self.args = None
 
     def getRemainingArgs(self):
