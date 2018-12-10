@@ -264,6 +264,14 @@ def main(argv=None):
     #Getting the args from command line and config file
     args = argreader.args
 
+    #The folders where the experience file will be written
+    if not (os.path.exists("../vis/{}".format(args.exp_id))):
+        os.makedirs("../vis/{}".format(args.exp_id))
+    if not (os.path.exists("../results/{}".format(args.exp_id))):
+        os.makedirs("../results/{}".format(args.exp_id))
+    if not (os.path.exists("../models/{}".format(args.exp_id))):
+        os.makedirs("../models/{}".format(args.exp_id))
+
     trainSet,distorNbList = load_data.loadData(args.dataset)
 
     if args.params:
