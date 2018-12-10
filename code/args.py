@@ -128,6 +128,8 @@ class ArgReader():
         self.parser.add_argument('--scnd_order_weight', type=float,metavar='S',
                         help='The weight of the second order derivative term in the loss function')
 
+        self.parser.add_argument('--prior_annot_incons', type=float,metavar='S',
+                        help='The weight of prior term in the loss function')
 
         self.args = None
 

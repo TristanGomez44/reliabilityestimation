@@ -26,6 +26,10 @@ def addLossTerms(loss,model,args):
     if args.scnd_order_weight > 0:
         loss -= args.scnd_order_weight*torch.cat(hessDiagList,dim=0).sum()
 
+    if args.prior_annot_incons > 0:
+
+        loss += args.prior_annot_incons*torch.pow((model.annot_incons-0.5*torch.ones(model.annot_incons.size())),2).sum()
+
     return loss
 
 def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
