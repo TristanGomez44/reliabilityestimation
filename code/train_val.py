@@ -85,25 +85,6 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
         optimizer.zero_grad()
 
     return loss
-def writeCSV(args,epoch, log_proba):
-    '''Write the loss of a model in a csv file
-
-    Every time a batch is processed during an epoch, this function is called and the results of the batch processing
-    printed in the csv file, just after the results from the last batch.
-
-    Args:
-        args (Namespace): the namespace containing all the arguments required for training and building the model
-        epoch (int): the epoch number
-        log_proba (list): the loss of the batch
-        phase (str): indicates the phase the model is currently in (can be \'train\', \'validation\' or \'test\')
-    '''
-
-    filePath = "../results/"+str(args.exp_id)+"/all_scores_model"+str(args.ind_id)+"_epoch"+str(epoch)+"_train.csv"
-
-    #Writes the log probability of the loss in a csv file
-    with open(filePath, "w") as text_file:
-        print("#loss",file=text_file)
-        print(str(log_proba),end="",file=text_file)
 
 def computeHessDiag(loss,tensor):
 
