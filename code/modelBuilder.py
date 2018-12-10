@@ -43,7 +43,10 @@ class MLE(nn.Module):
 
         vid_means = x.mean(dim=1)
         vid_means = vid_means.unsqueeze(1).expand(vid_means.size(0),self.polyDeg+1)
-        powers = torch.arange(self.polyDeg+1).unsqueeze(1).permute(1,0).expand(vid_means.size(0),self.polyDeg+1)
+        powers = torch.arange(self.polyDeg+1).float()
+        if xInt.is_cuda:
+            powers = powers.cuda()
+        powers = powers.unsqueeze(1).permute(1,0).expand(vid_means.size(0),self.polyDeg+1)
         vid_means_pow = torch.pow(vid_means,powers)
         amb_pol = (amb*vid_means_pow).sum(dim=1)
 
@@ -104,6 +107,36 @@ class MLE(nn.Module):
 
 
         self.setParams(annot_bias,annot_incons,video_ambTensor,vid_score)
+
+    def newtonUpdate(xInt):
+
+        x = xInt.float()
+
+        #Matrix containing the sum of all (video_amb,annot_incons) possible pairs
+        #amb = self.video_amb.unsqueeze(1).expand(self.contentNb, self.distorNb).contiguous().view(-1)
+        tmp = []
+        for i in range(self.contentNb):
+            tmp.append(self.video_amb[i].expand(self.distorNbList[i]))
+
+        amb = torch.cat(tmp,dim=1).unsqueeze(0)
+        amb_sq = torch.pow(amb,2)
+        amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
+        incon_sq = torch.pow(self.annot_incons,2)
+        incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
+        w_es = amb_sq+incon_sq
+
+        scor = self.video_scor.unsqueeze(1).expand(self.videoNb, self.annotNb)
+        bias = self.annot_bias.unsqueeze(0).expand(self.videoNb, self.annotNb)
+
+        scor_new = (w_es*(x-bias)/w_es).sum(dim=1)
+        bias_new = (w_es*(x-scor)/w_es).sum(dim=0)
+
+        #incon = self.annot_incons.unsqueeze(0).expand(self.videoNb, self.annotNb)
+        v = self.annot_incons
+
+        w_es_sq = torch.pow(w_es,2)
+
+        incons_new = v - ((w_es*v-w_es_sq*v*torch.pow(x-scor-bias,2))/()).sum(dim=0)
 
 def subRej(dataTorch):
 
