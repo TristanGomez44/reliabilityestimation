@@ -11,11 +11,12 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
 def str2FloatList(x):
+
     '''Convert a formated string to a list of float value'''
-    if len(x.split(" ")) == 1:
+    if len(x.split(",")) == 1:
         return float(x)
     else:
-        return [float(elem) for elem in x.split(" ")]
+        return [float(elem) for elem in x.split(",")]
 
 def str2StrList(x):
     '''Convert a string to a list of string value'''
@@ -130,6 +131,12 @@ class ArgReader():
 
         self.parser.add_argument('--prior_annot_incons', type=float,metavar='S',
                         help='The weight of prior term in the loss function')
+
+
+        self.parser.add_argument('--model_param', type=str,metavar='P',
+                            help='The model parameter to vary during robustness evaluation')
+        self.parser.add_argument('--model_values', type=str2FloatList, nargs='+',metavar='V',
+                            help='The values the varying model parameter has to have during robustness evaluation')
 
         self.args = None
 

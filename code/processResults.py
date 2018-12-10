@@ -21,6 +21,32 @@ import math
 import glob
 import matplotlib.cm as cm
 
+def getModels(args,trainSet,distorNbList):
+
+    iniPaths = glob.glob("../models/{}/*.ini".format(args.exp_id))
+
+    #Count the number of net in the experiment
+    netNumber = len(iniPaths)
+
+    modelList = []
+    modelNameList = []
+    lossList = []
+    #Finding the last weights for each model
+    for i in range(netNumber):
+
+        net_id = findNumbers(os.path.basename(iniPaths[i]))
+        lastModelPath = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,net_id)),key=findNumbers)[-1]
+
+        modelNameList.append(str(net_id))
+
+        model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg)
+        model.load_state_dict(torch.load(lastModelPath))
+        modelList.append(model)
+
+        loss = model(trainSet)
+        lossList.append(loss)
+
+    return modelList,modelNameList,lossList
 
 def PolyCoefficients(x, coeffs):
 
@@ -146,7 +172,7 @@ def robustness(model,trainSet,distorNbList,args,paramRange,paramName,corrKwargs,
     mos_mean_ref,sr_mean_ref,zs_sr_mean_ref = computeBaselines(trainSet)[:3]
 
     valueNumber = max(paramRange)-min(paramRange)+1
-    mle_err = np.zeros((valueNumber,nbRep))
+    mle_err = np.zeros((valueNumber,nbRep,len(args.model_values)))
     mos_err = np.zeros((valueNumber,nbRep))
     sr_err = np.zeros((valueNumber,nbRep))
     zs_sr_err = np.zeros((valueNumber,nbRep))
@@ -164,35 +190,39 @@ def robustness(model,trainSet,distorNbList,args,paramRange,paramName,corrKwargs,
                 #Randomly remove or scramble annotator scores
                 data = deteriorateData(trainSet,**corrKwargs)
 
-                model = modelBuilder.modelMaker(int(corrKwargs["nb_annot"]),len(data),distorNbList,args.poly_deg)
-                loss,_ = train_val.train(model,optimConst,kwargs,data, args)
+                for k in range(len(args.model_values)):
+                    model = modelBuilder.modelMaker(int(corrKwargs["nb_annot"]),len(data),distorNbList,args.poly_deg)
+                    setattr(args, args.model_param, args.model_values[k])
+                    loss,_ = train_val.train(model,optimConst,kwargs,data, args)
+                    mle_mean,_ = mean_std(model,loss)
+                    mle_err[i,j,k] = RMSE(mle_mean_ref,mle_mean)
 
-                mle_mean,_ = mean_std(model,loss)
                 mos_mean,sr_mean,zs_sr_mean = computeBaselines(data)[:3]
-                mle_err[i,j] = RMSE(mle_mean_ref,mle_mean)
-
                 mos_err[i,j] = RMSE(mos_mean_ref,mos_mean)
                 sr_err[i,j] = RMSE(sr_mean_ref,sr_mean)
                 zs_sr_err[i,j] = RMSE(zs_sr_mean_ref,zs_sr_mean)
 
             #sys.exit(0)
-        np.savetxt("../results/{}/mle_err_epoch{}_model{}.csv".format(args.exp_id,args.epochs,args.ind_id),mle_err)
-        np.savetxt("../results/{}/mos_err_epoch{}_model{}.csv".format(args.exp_id,args.epochs,args.ind_id),mos_err)
-        np.savetxt("../results/{}/sr_err_epoch{}_model{}.csv".format(args.exp_id,args.epochs,args.ind_id),sr_err)
-        np.savetxt("../results/{}/zs_sr_err_epoch{}_model{}.csv".format(args.exp_id,args.epochs,args.ind_id),zs_sr_err)
+
+        np.savetxt("../results/{}/mle_err_epoch{}.csv".format(args.exp_id,args.epochs),mle_err.reshape(mle_err.shape[0],mle_err.shape[1]*mle_err.shape[2]))
+        np.savetxt("../results/{}/mos_err_epoch{}.csv".format(args.exp_id,args.epochs),mos_err)
+        np.savetxt("../results/{}/sr_err_epoch{}.csv".format(args.exp_id,args.epochs),sr_err)
+        np.savetxt("../results/{}/zs_sr_err_epoch{}.csv".format(args.exp_id,args.epochs),zs_sr_err)
 
     else:
-        mle_err = np.genfromtxt("../results/{}/mle_err_epoch{}.csv".format(args.exp_id,args.epochs))
+        mle_err = np.genfromtxt("../results/{}/mle_err_epoch{}_model{}.csv".format(args.exp_id,args.epochs)).reshape(mle_err.shape[0],mle_err.shape[1]//len(args.model_values),len(args.model_values))
         mos_err =  np.genfromtxt("../results/{}/mos_err_epoch{}.csv".format(args.exp_id,args.epochs))
         sr_err = np.genfromtxt("../results/{}/sr_err_epoch{}.csv".format(args.exp_id,args.epochs))
         zs_sr_err = np.genfromtxt("../results/{}/zs_sr_err_epoch{}.csv".format(args.exp_id,args.epochs))
 
     plt.figure()
     #rangeAnnot = np.array(rangeAnnot)
+
     plt.errorbar(paramRange,mos_err.mean(axis=1), yerr=1.96*mos_err.std(axis=1)/np.sqrt(nbRep),label="MOS")
     plt.errorbar(paramRange,sr_err.mean(axis=1), yerr=1.96*sr_err.std(axis=1)/np.sqrt(nbRep),label="SR-MOS")
     plt.errorbar(paramRange,zs_sr_err.mean(axis=1), yerr=1.96*zs_sr_err.std(axis=1)/np.sqrt(nbRep),label="ZS-SR-MOS")
-    plt.errorbar(paramRange,mle_err.mean(axis=1), yerr=1.96*mle_err.std(axis=1)/np.sqrt(nbRep),label="MLE")
+    for k in range(len(args.model_values)):
+        plt.errorbar(paramRange,mle_err[:,:,k].mean(axis=1), yerr=1.96*mle_err[:,:,k].std(axis=1)/np.sqrt(nbRep),label="MLE{}".format(k))
     plt.legend()
 
     plt.savefig("../vis/{}/robustness_epoch{}_model{}.png".format(args.exp_id,args.epochs,args.ind_id))
@@ -209,38 +239,49 @@ def computeConfInter(loss,model):
 
     return confInterList
 
-def plotMLE(loss,model,exp_id,epoch,mos_mean,mos_std):
+def plotMLE(lossList,modelList,modelNameList,exp_id,mos_mean,mos_std):
 
-    confInterList = computeConfInter(loss,model)
+    interv = [[-1,1],[0,2],[-1,2],[1,5]]
 
-    for i,key in enumerate(model.state_dict()):
+    for i,key in enumerate(modelList[0].state_dict()):
+        for j,model in enumerate(modelList):
 
-        if key == "video_scor":
-            plt.figure(i,figsize=(13,5))
+            confInterList = computeConfInter(lossList[j],modelList[j])
 
-        else:
-            plt.figure(i)
+            if key == "video_scor":
+                plt.figure(i,figsize=(13,5))
 
-        plt.grid()
-        plt.xlabel("Individual")
-        plt.ylabel("MLE")
+            else:
+                plt.figure(i)
 
-        if model.state_dict()[key].is_cuda:
-            values = model.state_dict()[key].cpu().numpy()
-            yErrors = confInterList[i].cpu().detach().numpy()
-        else:
-            values = model.state_dict()[key].numpy()
-            yErrors = confInterList[i].detach().numpy()
+            plt.grid()
+            plt.xlabel("Individual")
+            plt.ylabel("MLE")
 
-        if key =="video_amb":
-            values = np.abs(values)
+            if model.state_dict()[key].is_cuda:
+                values = model.state_dict()[key].cpu().numpy()
+                yErrors = confInterList[i].cpu().detach().numpy()
+            else:
+                values = model.state_dict()[key].numpy()
+                yErrors = confInterList[i].detach().numpy()
 
-        plt.errorbar([i for i in range(len(values))],values, yerr=yErrors, fmt="*")
+            if key =="video_amb":
+                values = np.abs(values)
 
-        if key == "video_scor":
-            plt.errorbar([i+0.5 for i in range(len(values))],mos_mean, yerr=mos_std, fmt="*")
+            plt.errorbar([i+0.3*j for i in range(len(values))],values, yerr=yErrors, fmt="*",label=modelNameList[j])
 
-        plt.savefig("../vis/{}/{}_epoch{}.png".format(exp_id,key,epoch))
+            if key == "video_scor":
+                plt.errorbar([i+0.5 for i in range(len(values))],mos_mean, yerr=mos_std, fmt="*")
+
+            plt.legend()
+            plt.savefig("../vis/{}/{}.png".format(exp_id,key))
+
+            plt.figure(i+len(model.state_dict()))
+            plt.grid()
+            plt.xlim(interv[i])
+
+            plt.hist(values,10,density=True)
+            plt.savefig("../vis/{}/{}_hist.png".format(exp_id,key))
 
 
 def findNumbers(x):
@@ -275,13 +316,10 @@ def main(argv=None):
     trainSet,distorNbList = load_data.loadData(args.dataset)
 
     if args.params:
-        model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg)
-        optimConst,kwargs = train_val.get_OptimConstructor(args.optim,args.momentum)
-        if type(args.lr) is float:
-            args.lr = [args.lr]
-        loss,epoch = train_val.train(model,optimConst,kwargs,trainSet, args)
+
         mos_mean,mos_std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=False)
-        plotMLE(loss,model,args.exp_id,epoch,mos_mean,mos_std)
+        modelList,modelNameList,lossList = getModels(args,trainSet,distorNbList)
+        plotMLE(lossList,modelList,modelNameList,args.exp_id,mos_mean,mos_std)
 
     if args.robust:
         model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg)
@@ -290,14 +328,10 @@ def main(argv=None):
         robustness(model,trainSet,distorNbList,args,paramRange,args.param_name,corrKwargs,args.nb_rep)
 
     if args.std_mean:
-
         config = configparser.ConfigParser()
         config.read("../models/{}/model{}.ini".format(args.exp_id,args.ind_id))
-        print("../models/{}/model{}.ini".format(args.exp_id,args.ind_id))
-        #configFile = "../models/{}/model{}.ini".format(args.exp_id,)
         model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,int(config["default"]["poly_deg"]))
         lastModelPath = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,args.ind_id)),key=lambda x:findNumbers(x))[-1]
-        print(lastModelPath)
         model.load_state_dict(torch.load(lastModelPath))
         mean_std_plot(trainSet,distorNbList,args.dataset,args.exp_id,model)
 
