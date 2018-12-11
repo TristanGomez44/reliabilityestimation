@@ -9,6 +9,8 @@ from torch.distributions.categorical import Categorical
 import math
 import numpy as np
 from scipy.stats import moment
+import random
+
 class MLE(nn.Module):
     ''' Implement the model proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
 
@@ -195,6 +197,26 @@ def scrambleColumns(data,annotToScramble):
             c += 1
     #print(data_scr)
     return data_scr
+
+def scoreNoise(data,noisePercent):
+
+    dataFlat = data.view(-1)
+    noisy_score_nb = int(noisePercent*dataFlat.size(0))
+
+    scoresInd = random.sample(range(dataFlat.size(0)),noisy_score_nb)
+    scoresNoise = torch.LongTensor(noisy_score_nb).random_(0, 2)*2-1
+
+    c = 0
+    for i in range(len(dataFlat)):
+        if i in scoresInd:
+            if dataFlat[i]==1:
+                dataFlat[i]=2
+            elif  dataFlat[i]==5:
+                dataFlat[i]=4
+            else:
+                dataFlat[i] += scoresNoise[c]
+            c += 1
+    return dataFlat.view(data.size())
 
 def MOS(dataInt,z_score,sub_rej):
 

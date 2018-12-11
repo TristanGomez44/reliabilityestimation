@@ -118,10 +118,8 @@ class ArgReader():
                             help='The name of the parameter to vary during \
                                  robustness evaluation. Can be \'nb_annot\' or \'nb_corr\'')
 
-        self.parser.add_argument('--param_min', type=int, metavar='S',
-                            help='The minimum value of the parameter to vary')
-        self.parser.add_argument('--param_max', type=int, metavar='S',
-                            help='The maximum value of the parameter to vary')
+        self.parser.add_argument('--param_values', type=str2FloatList, nargs='+',metavar='V',
+                            help='The values the varying parameter has to have during robustness evaluation')
 
         self.parser.add_argument('--nb_rep', type=int, metavar='S',
                             help='The number of repetition for each parameter value')

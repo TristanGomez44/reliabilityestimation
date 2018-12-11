@@ -139,7 +139,7 @@ def RMSE(vec_ref,vec):
     #print(sq_sum)
     return np.sqrt(sq_sum/len(vec))
 
-def deteriorateData(trainSet,nb_annot,nb_corr):
+def deteriorateData(trainSet,nb_annot,nb_corr,noise_percent):
 
     data = trainSet.clone()
     nb_annot = int(nb_annot)
@@ -153,11 +153,14 @@ def deteriorateData(trainSet,nb_annot,nb_corr):
     #Randomly scramble subject scores
     if nb_corr > 0:
         annotToScramble = random.sample(range(nb_annot),nb_corr)
-        data = modelBuilder.c(data,annotToScramble)
+        data = modelBuilder.scrambleColumns(data,annotToScramble)
+
+    if noise_percent>0:
+        data = modelBuilder.scoreNoise(data,noise_percent)
 
     return data
 
-def robustness(model,trainSet,distorNbList,args,paramRange,paramName,corrKwargs,nbRep=100):
+def robustness(model,trainSet,distorNbList,args,paramValues,paramName,corrKwargs,nbRep=100):
 
     if type(args.lr) is float:
         args.lr = [args.lr]
@@ -171,18 +174,17 @@ def robustness(model,trainSet,distorNbList,args,paramRange,paramName,corrKwargs,
     mle_mean_ref,_ = mean_std(model,loss)
     mos_mean_ref,sr_mean_ref,zs_sr_mean_ref = computeBaselines(trainSet)[:3]
 
-    valueNumber = max(paramRange)-min(paramRange)+1
+    valueNumber = len(paramValues)
     mle_err = np.zeros((valueNumber,nbRep,len(args.model_values)))
     mos_err = np.zeros((valueNumber,nbRep))
     sr_err = np.zeros((valueNumber,nbRep))
     zs_sr_err = np.zeros((valueNumber,nbRep))
-    print(mle_err.shape)
-    #print(args.erase_results)
+
     if (not os.path.exists("../results/{}/mle_err_epoch{}.csv".format(args.exp_id,args.epochs))) or args.erase_results:
-        for i,paramValue in enumerate(paramRange):
+        for i,paramValue in enumerate(paramValues):
 
             if i%5==0:
-                print(paramName,":",paramValue,"/",max(paramRange))
+                print(paramName,":",paramValue,"/",valueNumber)
             for j in range(nbRep):
 
                 corrKwargs[paramName] = paramValue
@@ -218,11 +220,13 @@ def robustness(model,trainSet,distorNbList,args,paramRange,paramName,corrKwargs,
     plt.figure()
     #rangeAnnot = np.array(rangeAnnot)
 
-    plt.errorbar(paramRange,mos_err.mean(axis=1), yerr=1.96*mos_err.std(axis=1)/np.sqrt(nbRep),label="MOS")
-    plt.errorbar(paramRange,sr_err.mean(axis=1), yerr=1.96*sr_err.std(axis=1)/np.sqrt(nbRep),label="SR-MOS")
-    plt.errorbar(paramRange,zs_sr_err.mean(axis=1), yerr=1.96*zs_sr_err.std(axis=1)/np.sqrt(nbRep),label="ZS-SR-MOS")
+
+    plt.errorbar(paramValues,mos_err.mean(axis=1), yerr=1.96*mos_err.std(axis=1)/np.sqrt(nbRep),label="MOS")
+    plt.errorbar(paramValues,sr_err.mean(axis=1), yerr=1.96*sr_err.std(axis=1)/np.sqrt(nbRep),label="SR-MOS")
+    plt.errorbar(paramValues,zs_sr_err.mean(axis=1), yerr=1.96*zs_sr_err.std(axis=1)/np.sqrt(nbRep),label="ZS-SR-MOS")
     for k in range(len(args.model_values)):
-        plt.errorbar(paramRange,mle_err[:,:,k].mean(axis=1), yerr=1.96*mle_err[:,:,k].std(axis=1)/np.sqrt(nbRep),label="MLE{}".format(k))
+        plt.errorbar(paramValues,mle_err[:,:,k].mean(axis=1), yerr=1.96*mle_err[:,:,k].std(axis=1)/np.sqrt(nbRep),label="MLE{}".format(k))
+    plt.ylim(ymin=0)
     plt.legend()
 
     plt.savefig("../vis/{}/robustness_epoch{}_model{}.png".format(args.exp_id,args.epochs,args.ind_id))
@@ -323,9 +327,13 @@ def main(argv=None):
 
     if args.robust:
         model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg)
-        paramRange = range(args.param_min,args.param_max+1)
-        corrKwargs = {"nb_annot":trainSet.size(1),"nb_corr":0}
-        robustness(model,trainSet,distorNbList,args,paramRange,args.param_name,corrKwargs,args.nb_rep)
+        corrKwargs = {"nb_annot":trainSet.size(1),"nb_corr":0,"noise_percent":0}
+        if type(args.param_values) is float:
+            args.param_values = [args.param_values]
+        if type(args.model_values) is float:
+            args.model_values = [args.model_values]
+
+        robustness(model,trainSet,distorNbList,args,args.param_values,args.param_name,corrKwargs,args.nb_rep)
 
     if args.std_mean:
         config = configparser.ConfigParser()
