@@ -18,10 +18,10 @@ class MLE(nn.Module):
 
         super(MLE, self).__init__()
 
-        self.annot_bias  = nn.Parameter(torch.ones(annotNb))
-        self.annot_incons  = nn.Parameter(torch.ones(annotNb))
-        self.video_amb  = nn.Parameter(torch.ones(contentNb,polyDeg+1))
-        self.video_scor  = nn.Parameter(torch.ones(videoNb))
+        self.bias  = nn.Parameter(torch.ones(annotNb))
+        self.incons  = nn.Parameter(torch.ones(annotNb))
+        self.diffs  = nn.Parameter(torch.ones(contentNb,polyDeg+1))
+        self.trueScores  = nn.Parameter(torch.ones(videoNb))
         self.annotNb = annotNb
         self.videoNb = videoNb
         self.contentNb = contentNb
@@ -34,10 +34,10 @@ class MLE(nn.Module):
         x = xInt.float()
 
         #Matrix containing the sum of all (video_amb,annot_incons) possible pairs
-        #amb = self.video_amb.unsqueeze(1).expand(self.contentNb, self.distorNb).contiguous().view(-1)
+        #amb = self.diffs.unsqueeze(1).expand(self.contentNb, self.distorNb).contiguous().view(-1)
         tmp = []
         for i in range(self.contentNb):
-            tmp.append(self.video_amb[i].unsqueeze(1).expand(self.polyDeg+1,self.distorNbList[i]))
+            tmp.append(self.diffs[i].unsqueeze(1).expand(self.polyDeg+1,self.distorNbList[i]))
 
         amb = torch.cat(tmp,dim=1).permute(1,0)
         #amb = amb.expand(amb.size(0),self.polyDeg)
@@ -54,13 +54,13 @@ class MLE(nn.Module):
 
         amb_sq = torch.pow(amb_pol,2)
         amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
-        incon_sq = torch.pow(self.annot_incons,2)
+        incon_sq = torch.pow(self.incons,2)
         incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
         amb_incon = amb_sq+incon_sq
 
         #Matrix containing the sum of all (video_scor,annot_bias) possible pairs
-        scor = self.video_scor.unsqueeze(1).expand(self.videoNb, self.annotNb)
-        bias = self.annot_bias.unsqueeze(0).expand(self.videoNb, self.annotNb)
+        scor = self.trueScores.unsqueeze(1).expand(self.videoNb, self.annotNb)
+        bias = self.bias.unsqueeze(0).expand(self.videoNb, self.annotNb)
         scor_bias = scor+bias
 
         log_proba = (-torch.log(amb_incon)-torch.pow(x-scor_bias,2)/(amb_incon)).sum()
@@ -69,10 +69,10 @@ class MLE(nn.Module):
 
     def setParams(self,annot_bias,annot_incons,video_amb,video_scor):
 
-        self.annot_bias = nn.Parameter(annot_bias)
-        self.annot_incons = nn.Parameter(annot_incons)
-        self.video_amb = nn.Parameter(video_amb)
-        self.video_scor = nn.Parameter(video_scor)
+        self.bias = nn.Parameter(annot_bias)
+        self.incons = nn.Parameter(annot_incons)
+        self.diffs = nn.Parameter(video_amb)
+        self.trueScores = nn.Parameter(video_scor)
 
     def initParams(self,dataInt):
 
@@ -99,10 +99,9 @@ class MLE(nn.Module):
 
             #The data for all videos made from this reference video
             videoData = data[currInd:currInd+self.distorNbList[i]]
-
             data3D.append(videoData)
             currInd += self.distorNbList[i]
-
+            #print(data.mean(dim=0))
             expanded_use_score_mean = data.mean(dim=0).unsqueeze(1).permute(1, 0).expand_as(videoData)
             video_ambTensor[i,0] = torch.pow(videoData-expanded_use_score_mean,2).sum()/(self.annotNb*self.contentNb)
             video_ambTensor[i,0] = torch.sqrt(video_ambTensor[i,0])
@@ -115,26 +114,26 @@ class MLE(nn.Module):
         x = xInt.float()
 
         #Matrix containing the sum of all (video_amb,annot_incons) possible pairs
-        #amb = self.video_amb.unsqueeze(1).expand(self.contentNb, self.distorNb).contiguous().view(-1)
+        #amb = self.diffs.unsqueeze(1).expand(self.contentNb, self.distorNb).contiguous().view(-1)
         tmp = []
         for i in range(self.contentNb):
-            tmp.append(self.video_amb[i].expand(self.distorNbList[i]))
+            tmp.append(self.diffs[i].expand(self.distorNbList[i]))
 
         amb = torch.cat(tmp,dim=1).unsqueeze(0)
         amb_sq = torch.pow(amb,2)
         amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
-        incon_sq = torch.pow(self.annot_incons,2)
+        incon_sq = torch.pow(self.incons,2)
         incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
         w_es = amb_sq+incon_sq
 
-        scor = self.video_scor.unsqueeze(1).expand(self.videoNb, self.annotNb)
-        bias = self.annot_bias.unsqueeze(0).expand(self.videoNb, self.annotNb)
+        scor = self.trueScores.unsqueeze(1).expand(self.videoNb, self.annotNb)
+        bias = self.bias.unsqueeze(0).expand(self.videoNb, self.annotNb)
 
         scor_new = (w_es*(x-bias)/w_es).sum(dim=1)
         bias_new = (w_es*(x-scor)/w_es).sum(dim=0)
 
-        #incon = self.annot_incons.unsqueeze(0).expand(self.videoNb, self.annotNb)
-        v = self.annot_incons
+        #incon = self.incons.unsqueeze(0).expand(self.videoNb, self.annotNb)
+        v = self.incons
 
         w_es_sq = torch.pow(w_es,2)
 
