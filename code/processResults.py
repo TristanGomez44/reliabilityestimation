@@ -287,11 +287,86 @@ def plotMLE(lossList,modelList,modelNameList,exp_id,mos_mean,mos_std):
             plt.hist(values,10,density=True)
             plt.savefig("../vis/{}/{}_hist.png".format(exp_id,key))
 
+def error(dictPred,dictGT,paramNames):
+
+    errList = []
+
+    for name in paramNames:
+        print(name)
+        errList.append(RMSE(dictPred[name][:,0],dictGT[name]))
+
+    return errList
+
+def includPerc(dictPred,dictGT,paramNames):
+
+    inclList = []
+
+    for name in paramNames:
+        inclList.append(includPercVec(dictPred[name][:,0],dictPred[name][:,1],dictGT[name]))
+
+    return inclList
+
+def includPercVec(mean,confIterv,gt):
+
+    #includNb = 0
+    #for i in range(len(mean)):
+    #    if mean[i] - confIterv[i] < gt[i] and gt[i] < mean[i] + confIterv[i]:
+    #        includNb += 1
+
+    includNb = ((mean - confIterv < gt)* (gt < mean + confIterv)).sum()
+
+    return includNb/len(mean)
+
+def extractParamName(path):
+
+    path = os.path.basename(path).replace(".csv","")
+    return path[path.find("_")+1:]
+
+def compareWithGroundTruth(exp_id,dataset):
+
+    paramFiles = glob.glob("../data/{}_*.csv".format(dataset))
+    paramFiles.remove("../data/{}_scores.csv".format(dataset))
+    paramNameList = list(map(extractParamName,paramFiles))
+
+    gtParamDict = {}
+    for paramName in paramNameList:
+        gtParamDict[paramName] = np.genfromtxt("../data/{}_{}.csv".format(dataset,paramName))
+
+    paramsDicList = []
+    modelConfigPaths = sorted(glob.glob("../models/{}/*.ini".format(exp_id)))
+
+    csvHead = "model"+"".join(["\t{}".format(paramNameList[i]) for i in range(len(paramNameList))])
+
+    csvErr = ""
+    csvInclu = ""
+
+    for i in range(len(modelConfigPaths)):
+
+        modelInd = findNumbers(os.path.basename(modelConfigPaths[i]))
+
+        paramDict = {}
+        for paramName in paramNameList:
+             paramDict[paramName] = np.genfromtxt("../results/{}/model{}_{}.csv".format(exp_id,modelInd,paramName))
+
+        errors = error(paramDict,gtParamDict,paramNameList)
+        csvErr += "model{}".format(modelInd)+"".join(["\t{}".format(errors[i]) for i in range(len(errors))])+"\n"
+
+        incPer = includPerc(paramDict,gtParamDict,paramNameList)
+        csvInclu += "model{}".format(modelInd)+"".join(["\t{}".format(incPer[i]) for i in range(len(incPer))])+"\n"
+
+    with open("../results/{}/err.csv".format(exp_id),"w") as text_file:
+        print(csvHead,file=text_file)
+        print(csvErr,file=text_file,end="")
+
+    with open("../results/{}/inclPerc.csv".format(exp_id),"w") as text_file:
+        print(csvHead,file=text_file)
+        print(csvInclu,file=text_file)
 
 def findNumbers(x):
     '''Extracts the numbers of a string and returns them as an integer'''
 
     return int((''.join(xi for xi in str(x) if xi.isdigit())))
+
 def main(argv=None):
 
     #Getting arguments from config file and command line
@@ -302,6 +377,7 @@ def main(argv=None):
     argreader.parser.add_argument('--robust',action='store_true',help='To test the robustness of the model')
     argreader.parser.add_argument('--std_mean',action='store_true',help='To plot the std of score as function of mean score \
                                 with the parameters tuned to model this function')
+    argreader.parser.add_argument('--comp_gt',action='store_true',help='To compare the parameters found with the ground truth parameters. Require a fake dataset')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -342,6 +418,11 @@ def main(argv=None):
         lastModelPath = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,args.ind_id)),key=lambda x:findNumbers(x))[-1]
         model.load_state_dict(torch.load(lastModelPath))
         mean_std_plot(trainSet,distorNbList,args.dataset,args.exp_id,model)
+
+    if args.comp_gt:
+        print(args.dataset)
+        compareWithGroundTruth(args.exp_id,args.dataset)
+
 
 if __name__ == "__main__":
     main()
