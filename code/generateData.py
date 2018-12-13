@@ -11,29 +11,34 @@ import glob
 import numpy as np
 def main(argv=None):
 
-    #Getting arguments from config file and command line
-    #Building the arg reader
-    argreader = ArgReader(argv)
 
-    #argreader.parser.add_argument('--bias_std',action='store_true',help='To plot the parameters learned')
+    parser = argparse.ArgumentParser(description='Plot the accuracy across epoch')
 
-    argreader.parser.add_argument('--bias_std', metavar='STD',type=float,default=0.25,help='The upper limit for the y axis ')
-    argreader.parser.add_argument('--incons_alpha', metavar='STD',type=float,default=2,help='The alpha parameter of the inconsistency distribution')
-    argreader.parser.add_argument('--incons_beta', metavar='STD',type=float,default=2,help='The beta parameter of the inconsistency distribution')
-    argreader.parser.add_argument('--diff_alpha', metavar='STD',type=float,default=2,help='The alpha parameter of the difficulty distribution')
-    argreader.parser.add_argument('--diff_beta', metavar='STD',type=float,default=2,help='The beta parameter of the difficulty distribution')
+    parser.add_argument('--seed', metavar='STD',type=int,default=0,help='The seed to generate random numbers')
 
-    argreader.parser.add_argument('--nb_annot', metavar='STD',type=int,default=30,help='The number of annotators')
-    argreader.parser.add_argument('--nb_video_per_content', metavar='STD',type=float,default=8,help='The number of videos per content')
-    argreader.parser.add_argument('--nb_content', metavar='STD',type=float,default=25,help='The number of content')
+    parser.add_argument('--bias_std', metavar='STD',type=float,default=0.25,help='The upper limit for the y axis ')
+    parser.add_argument('--incons_alpha', metavar='STD',type=float,default=2,help='The alpha parameter of the inconsistency distribution')
+    parser.add_argument('--incons_beta', metavar='STD',type=float,default=2,help='The beta parameter of the inconsistency distribution')
+    parser.add_argument('--diff_alpha', metavar='STD',type=float,default=2,help='The alpha parameter of the difficulty distribution')
+    parser.add_argument('--diff_beta', metavar='STD',type=float,default=2,help='The beta parameter of the difficulty distribution')
 
-    argreader.parser.add_argument('--dataset_id', metavar='STD',type=int,default=0,help='The dataset id')
+    parser.add_argument('--nb_annot', metavar='STD',type=int,default=30,help='The number of annotators')
+    parser.add_argument('--nb_video_per_content', metavar='STD',type=float,default=8,help='The number of videos per content')
+    parser.add_argument('--nb_content', metavar='STD',type=float,default=25,help='The number of content')
 
-    #Reading the comand line arg
-    argreader.getRemainingArgs()
+    parser.add_argument('--dataset_id', metavar='STD',type=int,default=0,help='The dataset id')
 
     #Getting the args from command line and config file
-    args = argreader.args
+    args = parser.parse_args()
+
+    #Write the arguments in a config file so the experiment can be re-run
+    argreader.writeConfigFile("../data/artifData{}.ini".format(args.dataset_id))
+
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    if args.cuda:
+        torch.cuda.manual_seed(args.seed)
 
     trueScoreDis = Uniform(1,5)
     diffDis = Beta(args.diff_alpha, args.diff_beta)
