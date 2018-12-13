@@ -16,14 +16,25 @@ import torch.nn.functional as F
 from torch.distributions import Bernoulli
 from torch.autograd import grad
 import random
+import processResults
+def paramsToCsv(loss,model,exp_id,ind_id):
+
+    confInterList = processResults.computeConfInter(loss,model)
+    keys = list(model.state_dict().keys())
+
+    for i,tensor in enumerate(model.parameters()):
+
+        tensor = tensor.cpu().detach().numpy().reshape(-1)[:,np.newaxis]
+        confInterv = confInterList[i].cpu().detach().numpy().reshape(-1)[:,np.newaxis]
+        concat = np.concatenate((tensor,confInterv),axis=1)
+        np.savetxt("../results/{}/model{}_{}.csv".format(exp_id,ind_id,keys[i]),concat,delimiter="\t")
 
 def addLossTerms(loss,model,args):
 
-    hessDiagList,_ = computeHessDiagList(loss,model)
-
-    hessDiagList[2] = hessDiagList[2].view(-1)
-
     if args.scnd_order_weight > 0:
+
+        hessDiagList,_ = computeHessDiagList(loss,model)
+        hessDiagList[2] = hessDiagList[2].view(-1)
         loss -= args.scnd_order_weight*torch.cat(hessDiagList,dim=0).sum()
 
     if args.prior_annot_incons > 0:
@@ -101,7 +112,6 @@ def computeHessDiagList(loss, model):
     hessDiagList = []
     gradientList = []
     for tensor in model.parameters():
-        #print("Computing second order derivative for ",tensor.size())
 
         hessDiag,gradient = computeHessDiag(loss,tensor)
         hessDiagList.append(hessDiag)
@@ -137,10 +147,6 @@ def get_OptimConstructor(optimStr,momentum):
 
 def train(model,optimConst,kwargs,trainSet, args):
 
-    #Train and evaluate the model for several epochs
-    #print(trainSet)
-    model.initParams(trainSet)
-
     epoch = 1
     dist = args.stop_crit+1
     lrCounter = 0
@@ -162,15 +168,17 @@ def train(model,optimConst,kwargs,trainSet, args):
             if lrCounter<len(args.lr)-1:
                 lrCounter += 1
 
-        old_score = model.state_dict()["video_scor"].clone()
+        old_score = model.state_dict()["trueScores"].clone()
         loss = one_epoch_train(model,optimizer,trainSet,epoch, args,args.lr[lrCounter])
 
 
-        dist = torch.sqrt(torch.pow(old_score-model.state_dict()["video_scor"],2).sum())
+        dist = torch.sqrt(torch.pow(old_score-model.state_dict()["trueScores"],2).sum())
         epoch += 1
 
     print("\tStopped at epoch ",epoch)
     return loss,epoch
+
+
 
 def main(argv=None):
 
@@ -178,6 +186,8 @@ def main(argv=None):
     #Building the arg reader
     argreader = ArgReader(argv)
 
+    argreader.parser.add_argument('--only_init',action='store_true',help='To initialise a model without training it.\
+                                                                        This still computes the confidence intervals')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -215,19 +225,30 @@ def main(argv=None):
         model = model.cuda()
     torch.save(model.state_dict(), "../models/{}/model{}_epoch0".format(args.exp_id,args.ind_id))
 
-    #Getting the contructor and the kwargs for the choosen optimizer
-    optimConst,kwargs = get_OptimConstructor(args.optim,args.momentum)
+    #Train and evaluate the model for several epochs
+    #print(trainSet)
+    model.initParams(trainSet)
 
-    #If no learning rate is schedule is indicated (i.e. there's only one learning rate),
-    #the args.lr argument will be a float and not a float list.
-    #Converting it to a list with one element makes the rest of processing easier
-    if type(args.lr) is float:
-        args.lr = [args.lr]
+    if not args.only_init:
+        #Getting the contructor and the kwargs for the choosen optimizer
+        optimConst,kwargs = get_OptimConstructor(args.optim,args.momentum)
 
-    loss,epoch = train(model,optimConst,kwargs,trainSet, args)
-    #print(model.video_amb)
+        #If no learning rate is schedule is indicated (i.e. there's only one learning rate),
+        #the args.lr argument will be a float and not a float list.
+        #Converting it to a list with one element makes the rest of processing easier
+        if type(args.lr) is float:
+            args.lr = [args.lr]
 
-    torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
+        loss,epoch = train(model,optimConst,kwargs,trainSet, args)
+        #print(model.video_amb)
+
+        torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
+
+        #Write the parameters of the model and its confidence interval in a csv file
+    else:
+        loss = model(trainSet)
+
+    paramsToCsv(loss,model,args.exp_id,args.ind_id)
 
 if __name__ == "__main__":
     main()
