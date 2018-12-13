@@ -192,15 +192,13 @@ def main(argv=None):
     #Reading the comand line arg
     argreader.getRemainingArgs()
 
-    #Getting the args from command line and config file
     args = argreader.args
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)
-
-
-    #The group of class to detect
     np.random.seed(args.seed)
+    if args.cuda:
+        torch.cuda.manual_seed(args.seed)
 
     #The folders where the experience file will be written
     if not (os.path.exists("../vis/{}".format(args.exp_id))):
