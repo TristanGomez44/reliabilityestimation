@@ -5,6 +5,7 @@ import torch
 import glob
 import json
 import os
+import sys
 
 def readCSV(path, seed=0):
 
@@ -12,6 +13,7 @@ def readCSV(path, seed=0):
     torch.manual_seed(seed)
 
     csv = np.genfromtxt(path,dtype="str")[1:]
+    print(csv)
     distorNbList = countNbDistor(csv)
     trainSet = csv[:,2:]
 
@@ -40,14 +42,12 @@ def loadData(dataset):
         train_loader (torch.Tensor): the matrix for training
     '''
 
-    if dataset  == "IRCCYN":
-        trainSet,distorNbList = readCSV("../data/scores_irccyn.csv")
-    elif dataset  == "NETFLIX":
-        trainSet,distorNbList = readCSV("../data/scores_netflix.csv")
-    elif dataset == "VQEG":
-        trainSet,distorNbList = readCSV("../data/scores_vqeg.csv")
-    else:
-        raise ValueError("Unknown dataset",dataset)
+    try:
+        trainSet,distorNbList = readCSV("../data/{}_scores.csv".format(dataset))
+
+    except(OSError):
+        print("Can't find dataset {}. Exiting".format(dataset))
+        sys.exit(0)
 
     return torch.tensor(trainSet),distorNbList
 
