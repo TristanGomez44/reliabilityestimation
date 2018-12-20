@@ -17,6 +17,8 @@ def str2FloatList(x):
         return float(x)
     else:
         return [float(elem) for elem in x.split(",")]
+def strToStrList(x):
+    return x.split(",")
 
 def str2StrList(x):
     '''Convert a string to a list of string value'''
@@ -86,8 +88,8 @@ class ArgReader():
                             help='The threshold value under which the training stops')
         self.parser.add_argument('--epochs', type=int, metavar='N',
                             help='number of epochs to train')
-        self.parser.add_argument('--lr', type=str2FloatList, nargs='+',metavar='LR',
-                            help='learning rate (it can be a schedule : --lr 0.01 0.001 0.0001)')
+        self.parser.add_argument('--lr', type=str2FloatList,metavar='LR',
+                            help='learning rate (it can be a schedule : --lr 0.01,0.001,0.0001)')
         self.parser.add_argument('--num_workers', type=int,metavar='NUMWORKERS',
                             help='the number of processes to load the data. num_workers equal 0 means that it’s \
                             the main process that will do the data loading when needed, num_workers equal 1 is\
@@ -114,27 +116,39 @@ class ArgReader():
                             help='To run computations on the gpu')
         self.parser.add_argument('--optim', type=str, metavar='OPTIM',
                             help='the optimizer algorithm to use (default: \'LBFGS\')')
-        self.parser.add_argument('--param_name', type=str, metavar='S',
+        self.parser.add_argument('--rob_param', type=str, metavar='S',
                             help='The name of the parameter to vary during \
                                  robustness evaluation. Can be \'nb_annot\' or \'nb_corr\'')
 
-        self.parser.add_argument('--param_values', type=str2FloatList, nargs='+',metavar='V',
+        self.parser.add_argument('--rob_param_values', type=str2FloatList, nargs='+',metavar='V',
                             help='The values the varying parameter has to have during robustness evaluation')
 
         self.parser.add_argument('--nb_rep', type=int, metavar='S',
                             help='The number of repetition for each parameter value')
 
-        self.parser.add_argument('--scnd_order_weight', type=float,metavar='S',
-                        help='The weight of the second order derivative term in the loss function')
-
-        self.parser.add_argument('--prior_annot_incons', type=float,metavar='S',
-                        help='The weight of prior term in the loss function')
-
-
         self.parser.add_argument('--model_param', type=str,metavar='P',
                             help='The model parameter to vary during robustness evaluation')
         self.parser.add_argument('--model_values', type=str2FloatList, nargs='+',metavar='V',
                             help='The values the varying model parameter has to have during robustness evaluation')
+
+        self.parser.add_argument('--init_mode', type=str,metavar='P',
+                    help='The mode to use to initialise the model. Can be \'init_base\' or \'init_oracle\'.')
+
+        self.parser.add_argument('--perc_gt', type=float,metavar='S',
+                        help='For \'init_oracle\' initialisation mode, the proportion of parameters set to grount-truth.')
+
+        self.parser.add_argument('--perc_noise', type=float,metavar='S',
+                        help='For \'init_oracle\' initialisation mode, the norm of the gaussian noise added to params, relative to their norm.')
+        self.parser.add_argument('--prior', type=str,metavar='S',\
+                        help='The prior to use. Can be \'uniform\' or \'oracle\'.')
+        self.parser.add_argument('--prior_weight', type=float,metavar='S',\
+                        help='The weight of the prior term in the loss function')
+
+        self.parser.add_argument('--param_to_opti', type=strToStrList,metavar='V',
+                            help="The parameters to optimise. Can be a list with elements among 'bias','incons','diffs','trueScores'")
+
+        self.parser.add_argument('--note', type=str,metavar='NOTE',
+                            help="A note on the model")
 
         self.args = None
 
