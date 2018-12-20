@@ -13,11 +13,10 @@ def readCSV(path, seed=0):
     torch.manual_seed(seed)
 
     csv = np.genfromtxt(path,dtype="str")[1:]
-    print(csv)
     distorNbList = countNbDistor(csv)
     trainSet = csv[:,2:]
 
-    return trainSet.astype(int),distorNbList
+    return trainSet.astype(float),distorNbList
 def countNbDistor(dataset):
     ''' Count the number of distorted videos for each reference video '''
     distorNbList = []
