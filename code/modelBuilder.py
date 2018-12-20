@@ -10,6 +10,13 @@ import math
 import numpy as np
 from scipy.stats import moment
 import random
+from torch.distributions.normal import Normal
+
+from torch.distributions.beta import Beta
+from torch.distributions.uniform import Uniform
+from torch.distributions.normal import Normal
+
+import configparser
 
 class MLE(nn.Module):
     ''' Implement the model proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
@@ -37,7 +44,8 @@ class MLE(nn.Module):
         #amb = self.diffs.unsqueeze(1).expand(self.contentNb, self.distorNb).contiguous().view(-1)
         tmp = []
         for i in range(self.contentNb):
-            tmp.append(self.diffs[i].unsqueeze(1).expand(self.polyDeg+1,self.distorNbList[i]))
+
+            tmp.append(F.sigmoid(self.diffs[i]).unsqueeze(1).expand(self.polyDeg+1,self.distorNbList[i]))
 
         amb = torch.cat(tmp,dim=1).permute(1,0)
         #amb = amb.expand(amb.size(0),self.polyDeg)
@@ -50,11 +58,12 @@ class MLE(nn.Module):
             powers = powers.cuda()
         powers = powers.unsqueeze(1).permute(1,0).expand(vid_means.size(0),self.polyDeg+1)
         vid_means_pow = torch.pow(vid_means,powers)
+        #print(powers)
         amb_pol = (amb*vid_means_pow).sum(dim=1)
 
         amb_sq = torch.pow(amb_pol,2)
         amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
-        incon_sq = torch.pow(self.incons,2)
+        incon_sq = torch.pow(F.sigmoid(self.incons),2)
         incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
         amb_incon = amb_sq+incon_sq
 
@@ -74,7 +83,7 @@ class MLE(nn.Module):
         self.diffs = nn.Parameter(video_amb)
         self.trueScores = nn.Parameter(video_scor)
 
-    def initParams(self,dataInt):
+    def init_base(self,dataInt):
 
         annot_bias = torch.zeros(dataInt.size(1))
         #Use std to initialise inconsistency seems a bad idea.
@@ -106,8 +115,65 @@ class MLE(nn.Module):
             video_ambTensor[i,0] = torch.pow(videoData-expanded_use_score_mean,2).sum()/(self.annotNb*self.contentNb)
             video_ambTensor[i,0] = torch.sqrt(video_ambTensor[i,0])
 
-
         self.setParams(annot_bias,annot_incons,video_ambTensor,vid_score)
+
+    def init_oracle(self,dataInt,datasetName,percGT,percNoise):
+
+        self.init_base(dataInt)
+        paramNameList = list(self.state_dict().keys())
+
+        gtParamDict = {}
+        for paramName in paramNameList:
+            gtParamDict[paramName] = np.genfromtxt("../data/{}_{}.csv".format(datasetName,paramName))
+
+        for key in paramNameList:
+            tensor = getattr(self,key).clone()
+            tensor[:int(percGT*tensor.size(0))] = torch.tensor(gtParamDict[key]).view(tensor.size())[:int(percGT*tensor.size(0))]
+
+            oriSize = tensor.size()
+            tensor = tensor.view(-1)
+
+            meanAbsVal = torch.abs(tensor).mean()
+            gaussDis = Normal(torch.zeros(tensor.size(0)), 0.5*percNoise*meanAbsVal*torch.eye(tensor.size(0)))
+
+            noise = torch.diag(gaussDis.sample())
+            tensor += noise
+
+            tensor = tensor.view(oriSize)
+
+            if key == "incons" or key == "diffs":
+                tensor = torch.log(tensor/(1-tensor))
+
+            setattr(self,key,nn.Parameter(tensor))
+
+    def unifPrior(self,loss):
+        return loss
+
+    def oraclePrior(self,loss):
+        for param in self.disDict.keys():
+
+            loss -= self.disDict[param].log_prob(F.sigmoid(getattr(self,param))).sum()
+            #print(param,getattr(self,param),self.disDict[param].log_prob(getattr(self,param)))
+        return loss
+
+    def setPrior(self,priorName,dataset):
+
+        if priorName == "oracle":
+            self.prior = self.oraclePrior
+
+            self.disDict = {}
+            dataConf = configparser.ConfigParser()
+            dataConf.read("../data/{}.ini".format(dataset))
+            dataConf = dataConf['default']
+            self.disDict = {"diffs":Beta(float(dataConf['diff_alpha']), float(dataConf["diff_beta"])), \
+                            "incons":Beta(float(dataConf["incons_alpha"]), float(dataConf["incons_beta"])),\
+                            "bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
+
+        elif priorName == "uniform":
+            self.prior = self.unifPrior
+            self.disDict = None
+        else:
+            raise ValueError("No such prior : {}".format(priorName))
 
     def newtonUpdate(xInt):
 
@@ -262,5 +328,3 @@ if __name__ == '__main__':
 
     #mle.setParams(torch.rand(28),torch.rand(28),torch.rand(24),torch.rand(192))
     mle(torch.ones((192,28)))
-
-    mle.initParams(torch.ones((192,28)))
