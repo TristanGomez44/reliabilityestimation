@@ -5,31 +5,38 @@ from torch.distributions.beta import Beta
 from torch.distributions.uniform import Uniform
 from torch.distributions.normal import Normal
 from torch.distributions.multinomial import Multinomial
+import argparse
 
 import torch
 import glob
 import numpy as np
+import random
 def main(argv=None):
 
 
-    parser = argparse.ArgumentParser(description='Plot the accuracy across epoch')
+    #Getting arguments from config file and command line
+    #Building the arg reader
+    argreader = ArgReader(argv)
 
-    parser.add_argument('--seed', metavar='STD',type=int,default=0,help='The seed to generate random numbers')
+    argreader.parser.add_argument('--bias_std', metavar='STD',type=float,default=0.25,help='The standard deviation of the bias gaussian distribution')
+    argreader.parser.add_argument('--incons_alpha', metavar='STD',type=float,default=2,help='The alpha parameter of the inconsistency beta distribution')
+    argreader.parser.add_argument('--incons_beta', metavar='STD',type=float,default=2,help='The beta parameter of the inconsistency beta distribution')
+    argreader.parser.add_argument('--diff_alpha', metavar='STD',type=float,default=2,help='The alpha parameter of the difficulty beta distribution')
+    argreader.parser.add_argument('--diff_beta', metavar='STD',type=float,default=2,help='The beta parameter of the difficulty beta distribution')
 
-    parser.add_argument('--bias_std', metavar='STD',type=float,default=0.25,help='The upper limit for the y axis ')
-    parser.add_argument('--incons_alpha', metavar='STD',type=float,default=2,help='The alpha parameter of the inconsistency distribution')
-    parser.add_argument('--incons_beta', metavar='STD',type=float,default=2,help='The beta parameter of the inconsistency distribution')
-    parser.add_argument('--diff_alpha', metavar='STD',type=float,default=2,help='The alpha parameter of the difficulty distribution')
-    parser.add_argument('--diff_beta', metavar='STD',type=float,default=2,help='The beta parameter of the difficulty distribution')
+    argreader.parser.add_argument('--nb_annot', metavar='STD',type=int,default=30,help='The number of annotators')
+    argreader.parser.add_argument('--nb_video_per_content', metavar='STD',type=int,default=8,help='The number of videos per content')
+    argreader.parser.add_argument('--nb_content', metavar='STD',type=int,default=25,help='The number of content')
 
-    parser.add_argument('--nb_annot', metavar='STD',type=int,default=30,help='The number of annotators')
-    parser.add_argument('--nb_video_per_content', metavar='STD',type=float,default=8,help='The number of videos per content')
-    parser.add_argument('--nb_content', metavar='STD',type=float,default=25,help='The number of content')
+    argreader.parser.add_argument('--dataset_id', metavar='STD',type=int,default=0,help='The dataset id')
 
-    parser.add_argument('--dataset_id', metavar='STD',type=int,default=0,help='The dataset id')
+    argreader.parser.add_argument('--continuous',action='store_true',help='To generate continuous scores instead of discrete ones')
+
+    #Reading the comand line arg
+    argreader.getRemainingArgs()
 
     #Getting the args from command line and config file
-    args = parser.parse_args()
+    args = argreader.args
 
     #Write the arguments in a config file so the experiment can be re-run
     argreader.writeConfigFile("../data/artifData{}.ini".format(args.dataset_id))
@@ -59,14 +66,17 @@ def main(argv=None):
 
             normDis = Normal(trueScores[i]+bias[j], diffs[i//args.nb_video_per_content]+incons[j])
 
-            probs = torch.zeros((5))
-            for k in range(1,6):
-                probs[k-1] = normDis.cdf(torch.tensor(k))
-            discDis = Multinomial(probs=probs)
+            if not args.continuous:
+                probs = torch.zeros((5))
+                for k in range(1,6):
+                    probs[k-1] = normDis.cdf(torch.tensor(k))
+                discDis = Multinomial(probs=probs)
 
-            scores[i,j] = discDis.sample().max(0)[1]+1
+                scores[i,j] = discDis.sample().max(0)[1]+1
+            else:
+                scores[i,j] = normDis.sample()
 
-    scores = scores.int()
+    #scores = scores.int()
     csv = "videos\tencode"+"".join(["\t{}".format(i) for i in range(args.nb_annot)])+"\n"
 
     for i in range(0,nb_videos):
