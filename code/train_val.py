@@ -24,22 +24,21 @@ def paramsToCsv(loss,model,exp_id,ind_id):
 
     for i,tensor in enumerate(model.parameters()):
 
+        if keys[i] == "diffs" or keys[i] == "incons":
+            tensor = F.sigmoid(tensor)
+
         tensor = tensor.cpu().detach().numpy().reshape(-1)[:,np.newaxis]
+
         confInterv = confInterList[i].cpu().detach().numpy().reshape(-1)[:,np.newaxis]
         concat = np.concatenate((tensor,confInterv),axis=1)
         np.savetxt("../results/{}/model{}_{}.csv".format(exp_id,ind_id,keys[i]),concat,delimiter="\t")
 
-def addLossTerms(loss,model,args):
-
-    if args.scnd_order_weight > 0:
-
-        hessDiagList,_ = computeHessDiagList(loss,model)
-        hessDiagList[2] = hessDiagList[2].view(-1)
-        loss -= args.scnd_order_weight*torch.cat(hessDiagList,dim=0).sum()
-
-    if args.prior_annot_incons > 0:
-
-        loss += args.prior_annot_incons*torch.pow((model.annot_incons-0.5*torch.ones(model.annot_incons.size())),2).sum()
+def addLossTerms(loss,model,weight):
+    #print("Adding loss terms")
+    #print(loss)
+    if weight>0:
+        loss -= weight*model.prior(loss)
+        #print(loss)
 
     return loss
 
@@ -66,7 +65,7 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
 
     loss = neg_log_proba
 
-    loss = addLossTerms(loss,model,args)
+    loss = addLossTerms(loss,model,args.prior_weight)
 
     loss.backward(retain_graph=True)
 
@@ -152,7 +151,7 @@ def train(model,optimConst,kwargs,trainSet, args):
     lrCounter = 0
     while epoch < args.epochs and dist > args.stop_crit:
 
-        if epoch%400==0:
+        if epoch%args.log_interval==0:
             print("\tEpoch : ",epoch,"dist",float(dist))
 
         #This condition determines when the learning rate should be updated (to follow the learning rate schedule)
@@ -162,15 +161,17 @@ def train(model,optimConst,kwargs,trainSet, args):
             kwargs['lr'] = args.lr[lrCounter]
             #print("Learning rate : ",kwargs['lr'])
             if optimConst:
-                optimizer = optimConst(model.parameters(), **kwargs)
+                optimizer = optimConst((getattr(model,param) for param in args.param_to_opti), **kwargs)
             else:
                 optimizer = None
             if lrCounter<len(args.lr)-1:
                 lrCounter += 1
 
+        #print(model.state_dict()["diffs"])
         old_score = model.state_dict()["trueScores"].clone()
         loss = one_epoch_train(model,optimizer,trainSet,epoch, args,args.lr[lrCounter])
-
+        #print(model.state_dict()["diffs"])
+        #sys.exit(0)
 
         dist = torch.sqrt(torch.pow(old_score-model.state_dict()["trueScores"],2).sum())
         epoch += 1
@@ -221,11 +222,16 @@ def main(argv=None):
     model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg)
     if args.cuda:
         model = model.cuda()
-    torch.save(model.state_dict(), "../models/{}/model{}_epoch0".format(args.exp_id,args.ind_id))
 
-    #Train and evaluate the model for several epochs
-    #print(trainSet)
-    model.initParams(trainSet)
+    #Inititialise the model
+    if args.init_mode == "init_base":
+        model.init_base(trainSet)
+    elif args.init_mode == "init_oracle":
+        model.init_oracle(trainSet,args.dataset,float(args.perc_gt),float(args.perc_noise))
+    else:
+        raise ValueError("Unknown init method : {}".format(args.init_mode))
+
+    torch.save(model.state_dict(), "../models/{}/model{}_epoch0".format(args.exp_id,args.ind_id))
 
     if not args.only_init:
         #Getting the contructor and the kwargs for the choosen optimizer
@@ -237,8 +243,12 @@ def main(argv=None):
         if type(args.lr) is float:
             args.lr = [args.lr]
 
+        model.setPrior(args.prior,args.dataset)
+
+        #print(model.bias,F.sigmoid(model.incons),F.sigmoid(model.diffs),model.trueScores)
         loss,epoch = train(model,optimConst,kwargs,trainSet, args)
-        #print(model.video_amb)
+        #print(model.bias,F.sigmoid(model.incons),F.sigmoid(model.diffs),model.trueScores)
+
 
         torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
 
