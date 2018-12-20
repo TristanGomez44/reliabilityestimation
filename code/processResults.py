@@ -21,9 +21,43 @@ import math
 import glob
 import matplotlib.cm as cm
 
+from torch.distributions.beta import Beta
+from torch.distributions.uniform import Uniform
+from torch.distributions.normal import Normal
+
+def fakeDataDIstr(args):
+
+    dataConf = configparser.ConfigParser()
+    dataConf.read("../data/{}.ini".format(args.dataset))
+    dataConf = dataConf['default']
+
+    paramNameList = ["trueScores","diffs","incons","bias"]
+    dx = 0.01
+
+
+    dist_dic = {"trueScores":lambda x:torch.exp(Uniform(1,5).log_prob(x)),\
+                "diffs":lambda x:torch.exp(Beta(float(dataConf['diff_alpha']), float(dataConf["diff_beta"])).log_prob(x)), \
+                "incons":lambda x:torch.exp(Beta(float(dataConf["incons_alpha"]), float(dataConf["incons_beta"])).log_prob(x)),\
+                "bias":lambda x:torch.exp(Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1)).log_prob(x))}
+
+    range_dic = {"trueScores":torch.arange(1,5,dx),\
+                "diffs":torch.arange(0,1,dx), \
+                "incons":torch.arange(0,1,dx),\
+                "bias":torch.arange(-3*float(dataConf["bias_std"]),3*float(dataConf["bias_std"]),dx)}
+
+    for i,paramName in enumerate(paramNameList):
+
+        paramValues = np.genfromtxt("../data/artifData{}_{}.csv".format(dataConf["dataset_id"],paramName))
+        trueCDF = dist_dic[paramName](range_dic[paramName]).numpy().reshape(-1)
+
+        plt.figure(i)
+        plt.plot(range_dic[paramName].numpy(),trueCDF)
+        plt.hist(paramValues,10,density=True)
+        plt.savefig("../vis/{}/{}_dis.png".format(args.exp_id,paramName))
+
 def getModels(args,trainSet,distorNbList):
 
-    iniPaths = glob.glob("../models/{}/*.ini".format(args.exp_id))
+    iniPaths = sorted(glob.glob("../models/{}/*.ini".format(args.exp_id)))
 
     #Count the number of net in the experiment
     netNumber = len(iniPaths)
@@ -36,7 +70,6 @@ def getModels(args,trainSet,distorNbList):
 
         net_id = findNumbers(os.path.basename(iniPaths[i]))
         lastModelPath = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,net_id)),key=findNumbers)[-1]
-
         modelNameList.append(str(net_id))
 
         model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg)
@@ -120,24 +153,6 @@ def mean_std(model,loss):
     mle_mean = model.video_scor
     mle_std = 1.96/torch.sqrt(train_val.computeHessDiag(loss,mle_mean)[0])
     return mle_mean,mle_std
-
-def RMSE(vec_ref,vec):
-
-    if not (type(vec) is np.ndarray):
-        if vec.is_cuda:
-            vec = vec.cpu()
-        vec = vec.detach().numpy()
-    if not (type(vec_ref) is np.ndarray):
-        if vec_ref.is_cuda:
-            vec_ref = vec_ref.cpu()
-        vec_ref = vec_ref.detach().numpy()
-
-    sq_sum = np.power(vec_ref-vec,2).sum()
-    #if sq_sum>500:
-    #    print(vec_ref-vec)
-
-    #print(sq_sum)
-    return np.sqrt(sq_sum/len(vec))
 
 def deteriorateData(trainSet,nb_annot,nb_corr,noise_percent):
 
@@ -243,18 +258,28 @@ def computeConfInter(loss,model):
 
     return confInterList
 
-def plotMLE(lossList,modelList,modelNameList,exp_id,mos_mean,mos_std):
+def plotMLE(lossList,modelList,modelNameList,exp_id,dataset=None,ind_id=None,mos_mean=None,mos_std=None):
 
     interv = [[-1,1],[0,2],[-1,2],[1,5]]
 
+    if not (ind_id is None):
+        modelList = [modelList[ind_id]]
+        lossList = [lossList[ind_id]]
+        modelNameList = [modelNameList[ind_id]]
+
     for i,key in enumerate(modelList[0].state_dict()):
+
+        if os.path.exists("../data/{}_{}.csv".format(dataset,key)):
+            gt_values = np.genfromtxt("../data/{}_{}.csv".format(dataset,key))
+        else:
+            gt_values = None
+
         for j,model in enumerate(modelList):
 
             confInterList = computeConfInter(lossList[j],modelList[j])
 
             if key == "video_scor":
-                plt.figure(i,figsize=(13,5))
-
+                plt.figure(i,figsize=(20,5))
             else:
                 plt.figure(i)
 
@@ -273,9 +298,13 @@ def plotMLE(lossList,modelList,modelNameList,exp_id,mos_mean,mos_std):
                 values = np.abs(values)
 
             plt.errorbar([i+0.3*j for i in range(len(values))],values, yerr=yErrors, fmt="*",label=modelNameList[j])
+            #plt.plot([i+0.3*j for i in range(len(values))],values,"*",label=modelNameList[j])
 
-            if key == "video_scor":
+            if key == "video_scor" and (not (mos_mean is None)):
                 plt.errorbar([i+0.5 for i in range(len(values))],mos_mean, yerr=mos_std, fmt="*")
+
+            if not (gt_values is None):
+                plt.plot([i for i in range(len(gt_values))],gt_values,"*",label="GT")
 
             plt.legend()
             plt.savefig("../vis/{}/{}.png".format(exp_id,key))
@@ -292,10 +321,24 @@ def error(dictPred,dictGT,paramNames):
     errList = []
 
     for name in paramNames:
-        print(name)
-        errList.append(RMSE(dictPred[name][:,0],dictGT[name]))
+
+        errList.append(errorVec(dictPred[name][:,0],dictGT[name]))
 
     return errList
+
+def errorVec(vec_ref,vec):
+
+    if not (type(vec) is np.ndarray):
+        if vec.is_cuda:
+            vec = vec.cpu()
+        vec = vec.detach().numpy()
+    if not (type(vec_ref) is np.ndarray):
+        if vec_ref.is_cuda:
+            vec_ref = vec_ref.cpu()
+        vec_ref = vec_ref.detach().numpy()
+
+
+    return (np.abs(vec_ref-vec)/np.abs(vec_ref)).mean()
 
 def includPerc(dictPred,dictGT,paramNames):
 
@@ -308,11 +351,6 @@ def includPerc(dictPred,dictGT,paramNames):
 
 def includPercVec(mean,confIterv,gt):
 
-    #includNb = 0
-    #for i in range(len(mean)):
-    #    if mean[i] - confIterv[i] < gt[i] and gt[i] < mean[i] + confIterv[i]:
-    #        includNb += 1
-
     includNb = ((mean - confIterv < gt)* (gt < mean + confIterv)).sum()
 
     return includNb/len(mean)
@@ -322,19 +360,18 @@ def extractParamName(path):
     path = os.path.basename(path).replace(".csv","")
     return path[path.find("_")+1:]
 
-def compareWithGroundTruth(exp_id,dataset):
+def compareWithGroundTruth(exp_id,dataset,varParam):
 
     paramFiles = glob.glob("../data/{}_*.csv".format(dataset))
     paramFiles.remove("../data/{}_scores.csv".format(dataset))
-    paramNameList = list(map(extractParamName,paramFiles))
+    paramNameList = sorted(list(map(extractParamName,paramFiles)))
 
     gtParamDict = {}
     for paramName in paramNameList:
         gtParamDict[paramName] = np.genfromtxt("../data/{}_{}.csv".format(dataset,paramName))
 
     paramsDicList = []
-    modelConfigPaths = sorted(glob.glob("../models/{}/*.ini".format(exp_id)))
-
+    modelConfigPaths = sorted(glob.glob("../models/{}/*.ini".format(exp_id)),key=findNumbers)
     csvHead = "model"+"".join(["\t{}".format(paramNameList[i]) for i in range(len(paramNameList))])
 
     csvErr = ""
@@ -344,21 +381,26 @@ def compareWithGroundTruth(exp_id,dataset):
 
         modelInd = findNumbers(os.path.basename(modelConfigPaths[i]))
 
+        config = configparser.ConfigParser()
+        config.read(modelConfigPaths[i])
+
+        paramValue = config["default"][varParam]
+
         paramDict = {}
         for paramName in paramNameList:
              paramDict[paramName] = np.genfromtxt("../results/{}/model{}_{}.csv".format(exp_id,modelInd,paramName))
 
         errors = error(paramDict,gtParamDict,paramNameList)
-        csvErr += "model{}".format(modelInd)+"".join(["\t{}".format(errors[i]) for i in range(len(errors))])+"\n"
+        csvErr += "{}".format(paramValue)+"".join(["\t{}".format(round(100*errors[i],2)) for i in range(len(errors))])+"\n"
 
         incPer = includPerc(paramDict,gtParamDict,paramNameList)
-        csvInclu += "model{}".format(modelInd)+"".join(["\t{}".format(incPer[i]) for i in range(len(incPer))])+"\n"
+        csvInclu += "{}".format(paramValue)+"".join(["\t{}".format(round(100*incPer[i],2)) for i in range(len(incPer))])+"\n"
 
-    with open("../results/{}/err.csv".format(exp_id),"w") as text_file:
+    with open("../results/{}/err_{}.csv".format(exp_id,dataset),"w") as text_file:
         print(csvHead,file=text_file)
         print(csvErr,file=text_file,end="")
 
-    with open("../results/{}/inclPerc.csv".format(exp_id),"w") as text_file:
+    with open("../results/{}/inclPerc_{}.csv".format(exp_id,dataset),"w") as text_file:
         print(csvHead,file=text_file)
         print(csvInclu,file=text_file)
 
@@ -373,11 +415,16 @@ def main(argv=None):
     #Building the arg reader
     argreader = ArgReader(argv)
 
-    argreader.parser.add_argument('--params',action='store_true',help='To plot the parameters learned')
+    argreader.parser.add_argument('--params',type=int, metavar='S',nargs="*",help='To plot the parameters learned')
+
+    argreader.parser.add_argument('--mos',action='store_true',help='To plot the scores found by mos with the --params plot')
     argreader.parser.add_argument('--robust',action='store_true',help='To test the robustness of the model')
     argreader.parser.add_argument('--std_mean',action='store_true',help='To plot the std of score as function of mean score \
                                 with the parameters tuned to model this function')
-    argreader.parser.add_argument('--comp_gt',action='store_true',help='To compare the parameters found with the ground truth parameters. Require a fake dataset')
+    argreader.parser.add_argument('--comp_gt',type=str,metavar='PARAM',help='To compare the parameters found with the ground truth parameters. Require a fake dataset. The argument should\
+                                    be the name of the parameter varying across the different models in the experiment.')
+    argreader.parser.add_argument('--artif_data',action='store_true',help='To plot the real and empirical distribution of the parameters of a fake dataset. \
+                                    The fake dataset to plot is set by the --dataset argument')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -397,19 +444,28 @@ def main(argv=None):
 
     if args.params:
 
-        mos_mean,mos_std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=False)
         modelList,modelNameList,lossList = getModels(args,trainSet,distorNbList)
-        plotMLE(lossList,modelList,modelNameList,args.exp_id,mos_mean,mos_std)
+        if len(args.params) > 0:
+            ind_id = args.params[0]
+        else:
+            ind_id = None
+
+        if args.mos:
+            mos_mean,mos_std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=False)
+        else:
+            mos_mean,mos_std = None,None
+
+        plotMLE(lossList,modelList,modelNameList,args.exp_id,dataset=args.dataset,ind_id=ind_id,mos_mean=mos_mean,mos_std=mos_std)
 
     if args.robust:
         model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg)
-        corrKwargs = {"nb_annot":trainSet.size(1),"nb_corr":0,"noise_percent":0}
-        if type(args.param_values) is float:
-            args.param_values = [args.param_values]
+        corrKwargs = {"nb_annot":trainSet.size(1),"nb_corr":0,"score_noise":0}
+        if type(args.rob_param_values) is float:
+            args.rob_param_values = [args.rob_param_values]
         if type(args.model_values) is float:
             args.model_values = [args.model_values]
 
-        robustness(model,trainSet,distorNbList,args,args.param_values,args.param_name,corrKwargs,args.nb_rep)
+        robustness(model,trainSet,distorNbList,args,args.rob_param_values,args.rob_param,corrKwargs,args.nb_rep)
 
     if args.std_mean:
         config = configparser.ConfigParser()
@@ -420,9 +476,10 @@ def main(argv=None):
         mean_std_plot(trainSet,distorNbList,args.dataset,args.exp_id,model)
 
     if args.comp_gt:
-        print(args.dataset)
-        compareWithGroundTruth(args.exp_id,args.dataset)
+        compareWithGroundTruth(args.exp_id,args.dataset,args.comp_gt)
 
+    if args.artif_data:
+        fakeDataDIstr(args)
 
 if __name__ == "__main__":
     main()
