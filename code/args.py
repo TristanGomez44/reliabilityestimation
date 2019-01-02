@@ -134,9 +134,6 @@ class ArgReader():
         self.parser.add_argument('--init_mode', type=str,metavar='P',
                     help='The mode to use to initialise the model. Can be \'init_base\' or \'init_oracle\'.')
 
-        self.parser.add_argument('--perc_gt', type=float,metavar='S',
-                        help='For \'init_oracle\' initialisation mode, the proportion of parameters set to grount-truth.')
-
         self.parser.add_argument('--perc_noise', type=float,metavar='S',
                         help='For \'init_oracle\' initialisation mode, the norm of the gaussian noise added to params, relative to their norm.')
         self.parser.add_argument('--prior', type=str,metavar='S',\
@@ -149,6 +146,21 @@ class ArgReader():
 
         self.parser.add_argument('--note', type=str,metavar='NOTE',
                             help="A note on the model")
+
+        self.parser.add_argument('--norm_sum', type=str2bool, metavar='S',
+                            help='To add the sum of the prob for all possible labels in the loss function. This is a term to minimise.\
+                                When using integer scores, this term should be used to compute correctly the probability of a score.')
+
+        self.parser.add_argument('--score_dis', type=str, metavar='S',
+                            help='The distribution to use to model the scores')
+
+        self.parser.add_argument('--score_min', type=int, metavar='S',
+                            help='The minimum score that can be given by an annotator')
+        self.parser.add_argument('--score_max', type=int, metavar='S',
+                            help='The maximum score that can be given by an annotator')
+        self.parser.add_argument('--div_beta_var', type=float, metavar='S',
+                            help='The coefficient with which to rescale down the variances (difficulties and inconsistencies) \
+                            sampled from the beta distribution')
 
         self.args = None
 
