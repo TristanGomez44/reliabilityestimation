@@ -18,10 +18,12 @@ from torch.distributions.normal import Normal
 
 import configparser
 
+import generateData
+
 class MLE(nn.Module):
     ''' Implement the model proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
 
-    def __init__(self,videoNb,contentNb,annotNb,distorNbList,polyDeg):
+    def __init__(self,videoNb,contentNb,annotNb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var):
 
         super(MLE, self).__init__()
 
@@ -36,45 +38,94 @@ class MLE(nn.Module):
         self.polyDeg = polyDeg
         self.distorNbList = distorNbList
 
+        self.score_min = score_min
+        self.score_max = score_max
+        self.score_dis = score_dis
+
+        self.div_beta_var = div_beta_var
+
     def forward(self,xInt):
 
         x = xInt.float()
+        scoresDis = self.compScoreDis(x.is_cuda)
+
+        x = generateData.betaNormalize(x,self.score_min,self.score_max)
+
+        #print(scoresDis.log_prob(x.unsqueeze(2)))
+        #sys.exit(0)
+
+        log_prob = scoresDis.log_prob(x.unsqueeze(2)).sum()
+        #print(x.unsqueeze(2))
+        return -log_prob
+
+    def compScoreDis(self,x_is_cuda):
+
+        amb_incon = self.ambInconsMatrix(x_is_cuda)
+        scor_bias = self.trueScoresBiasMatrix()
+
+        if self.score_dis == "Beta":
+
+            scor_bias = torch.clamp(scor_bias,self.score_min,self.score_max)
+            scor_bias = generateData.betaNormalize(scor_bias,self.score_min,self.score_max)
+            #scor_bias = torch.sigmoid(scor_bias)
+            #print(scor_bias[0,0],amb_incon[0,0]/self.div_beta_var)
+            alpha,beta = generateData.meanvar_to_alphabeta(scor_bias,amb_incon/self.div_beta_var)
+            #print(alpha[0,0],beta[0,0])
+            #sys.exit(0)
+
+            scoresDis = Beta(alpha.unsqueeze(2),beta.unsqueeze(2))
+
+            for i in range(scor_bias.size(0)):
+                for j in range(scor_bias.size(1)):
+                    if scor_bias[i,j]>1 or scor_bias[i,j]<0:
+                        print(i,j,scor_bias[i,j])
+
+        elif self.score_dis == "Normal":
+            scoresDis = Normal(scor_bias.unsqueeze(2),amb_incon.unsqueeze(2))
+        else:
+            raise ValueError("Unknown score distribution : {}".format(self.score_dis))
+
+        return scoresDis
+
+    def ambInconsMatrix(self,xIsCuda):
+
+        #print("diff",torch.sigmoid(self.diffs[0]),"incons",torch.sigmoid(self.incons[0]))
 
         #Matrix containing the sum of all (video_amb,annot_incons) possible pairs
         #amb = self.diffs.unsqueeze(1).expand(self.contentNb, self.distorNb).contiguous().view(-1)
         tmp = []
         for i in range(self.contentNb):
-
-            tmp.append(F.sigmoid(self.diffs[i]).unsqueeze(1).expand(self.polyDeg+1,self.distorNbList[i]))
+            tmp.append(torch.sigmoid(self.diffs[i]).unsqueeze(1).expand(self.polyDeg+1,self.distorNbList[i]))
 
         amb = torch.cat(tmp,dim=1).permute(1,0)
         #amb = amb.expand(amb.size(0),self.polyDeg)
         #print(amb.size())
 
-        vid_means = x.mean(dim=1)
-        vid_means = vid_means.unsqueeze(1).expand(vid_means.size(0),self.polyDeg+1)
+        vid_means = self.trueScores.unsqueeze(1).expand(self.trueScores.size(0),self.polyDeg+1)
         powers = torch.arange(self.polyDeg+1).float()
-        if xInt.is_cuda:
+        if xIsCuda:
             powers = powers.cuda()
         powers = powers.unsqueeze(1).permute(1,0).expand(vid_means.size(0),self.polyDeg+1)
         vid_means_pow = torch.pow(vid_means,powers)
         #print(powers)
         amb_pol = (amb*vid_means_pow).sum(dim=1)
 
+        #print("diff",amb_pol[0])
+
         amb_sq = torch.pow(amb_pol,2)
         amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
-        incon_sq = torch.pow(F.sigmoid(self.incons),2)
+        incon_sq = torch.pow(torch.sigmoid(self.incons),2)
         incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
-        amb_incon = amb_sq+incon_sq
+
+        #print("diff",amb_sq[0,0],"incons",incon_sq[0,0])
+        return amb_sq+incon_sq
+
+    def trueScoresBiasMatrix(self):
 
         #Matrix containing the sum of all (video_scor,annot_bias) possible pairs
-        scor = self.trueScores.unsqueeze(1).expand(self.videoNb, self.annotNb)
+        scor = self.trueScores.unsqueeze(1).expand(self.videoNb,self.annotNb)
         bias = self.bias.unsqueeze(0).expand(self.videoNb, self.annotNb)
-        scor_bias = scor+bias
-
-        log_proba = (-torch.log(amb_incon)-torch.pow(x-scor_bias,2)/(amb_incon)).sum()
-
-        return -log_proba
+        return scor+bias
 
     def setParams(self,annot_bias,annot_incons,video_amb,video_scor):
 
@@ -117,7 +168,7 @@ class MLE(nn.Module):
 
         self.setParams(annot_bias,annot_incons,video_ambTensor,vid_score)
 
-    def init_oracle(self,dataInt,datasetName,percGT,percNoise):
+    def init_oracle(self,dataInt,datasetName,percNoise=0):
 
         self.init_base(dataInt)
         paramNameList = list(self.state_dict().keys())
@@ -128,7 +179,7 @@ class MLE(nn.Module):
 
         for key in paramNameList:
             tensor = getattr(self,key).clone()
-            tensor[:int(percGT*tensor.size(0))] = torch.tensor(gtParamDict[key]).view(tensor.size())[:int(percGT*tensor.size(0))]
+            tensor = torch.tensor(gtParamDict[key]).view(tensor.size()).float()
 
             oriSize = tensor.size()
             tensor = tensor.view(-1)
@@ -141,6 +192,10 @@ class MLE(nn.Module):
 
             tensor = tensor.view(oriSize)
 
+            #if key == "trueScores":
+            #    tensor = generateData.betaNormalize(tensor,self.score_min,self.score_max)
+
+            #print(key,tensor)
             if key == "incons" or key == "diffs":
                 tensor = torch.log(tensor/(1-tensor))
 
@@ -152,7 +207,7 @@ class MLE(nn.Module):
     def oraclePrior(self,loss):
         for param in self.disDict.keys():
 
-            loss -= self.disDict[param].log_prob(F.sigmoid(getattr(self,param))).sum()
+            loss -= self.disDict[param].log_prob(torch.sigmoid(getattr(self,param))).sum()
             #print(param,getattr(self,param),self.disDict[param].log_prob(getattr(self,param)))
         return loss
 
@@ -309,7 +364,7 @@ def MOS(dataInt,z_score,sub_rej):
 
     return mos_mean.numpy(),mos_conf.numpy()
 
-def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg):
+def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var):
     '''Build a model
     Args:
         annot_nb (int): the bumber of annotators
@@ -319,7 +374,7 @@ def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg):
         the built model
     '''
 
-    model = MLE(nbVideos,len(distorNbList),annot_nb,distorNbList,polyDeg)
+    model = MLE(nbVideos,len(distorNbList),annot_nb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var)
     return model
 
 if __name__ == '__main__':
