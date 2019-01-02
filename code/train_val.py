@@ -17,28 +17,41 @@ from torch.distributions import Bernoulli
 from torch.autograd import grad
 import random
 import processResults
-def paramsToCsv(loss,model,exp_id,ind_id):
+import generateData
+def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
 
     confInterList = processResults.computeConfInter(loss,model)
     keys = list(model.state_dict().keys())
 
     for i,tensor in enumerate(model.parameters()):
 
+
         if keys[i] == "diffs" or keys[i] == "incons":
-            tensor = F.sigmoid(tensor)
+            tensor = torch.sigmoid(tensor)
+
+        #if keys[i] ==  "trueScores":
+        #    tensor = generateData.betaDenormalize(tensor,score_min,score_max)
+        #    tensor = torch.clamp(tensor,score_min,score_max)
 
         tensor = tensor.cpu().detach().numpy().reshape(-1)[:,np.newaxis]
 
         confInterv = confInterList[i].cpu().detach().numpy().reshape(-1)[:,np.newaxis]
         concat = np.concatenate((tensor,confInterv),axis=1)
-        np.savetxt("../results/{}/model{}_{}.csv".format(exp_id,ind_id,keys[i]),concat,delimiter="\t")
+        np.savetxt("../results/{}/model{}_epoch{}_{}.csv".format(exp_id,ind_id,epoch,keys[i]),concat,delimiter="\t")
 
-def addLossTerms(loss,model,weight):
+def addLossTerms(loss,model,weight,normSum,cuda):
     #print("Adding loss terms")
     #print(loss)
     if weight>0:
         loss -= weight*model.prior(loss)
         #print(loss)
+    if normSum:
+
+        labels = torch.arange(1,6).float().unsqueeze(0).unsqueeze(0).expand(model.annotNb,model.videoNb,5)
+        scoreDis = model.compScoreDis(cuda)
+        normSum = torch.log(torch.exp(scoreDis.log_prob(labels)).sum(dim=2)).sum()
+        print(normSum)
+        loss += normSum
 
     return loss
 
@@ -65,7 +78,7 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
 
     loss = neg_log_proba
 
-    loss = addLossTerms(loss,model,args.prior_weight)
+    loss = addLossTerms(loss,model,args.prior_weight,args.norm_sum,trainMatrix.is_cuda)
 
     loss.backward(retain_graph=True)
 
@@ -152,6 +165,7 @@ def train(model,optimConst,kwargs,trainSet, args):
     while epoch < args.epochs and dist > args.stop_crit:
 
         if epoch%args.log_interval==0:
+
             print("\tEpoch : ",epoch,"dist",float(dist))
 
         #This condition determines when the learning rate should be updated (to follow the learning rate schedule)
@@ -173,8 +187,14 @@ def train(model,optimConst,kwargs,trainSet, args):
         #print(model.state_dict()["diffs"])
         #sys.exit(0)
 
+
+
         dist = torch.sqrt(torch.pow(old_score-model.state_dict()["trueScores"],2).sum())
         epoch += 1
+
+        if epoch%args.log_interval==0:
+            paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max)
+            torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
 
     print("\tStopped at epoch ",epoch)
     return loss,epoch
@@ -219,7 +239,8 @@ def main(argv=None):
         trainSet = trainSet.cuda()
 
     #Building the model
-    model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg)
+    model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg,\
+                                    args.score_dis,args.score_min,args.score_max,args.div_beta_var)
     if args.cuda:
         model = model.cuda()
 
@@ -227,11 +248,15 @@ def main(argv=None):
     if args.init_mode == "init_base":
         model.init_base(trainSet)
     elif args.init_mode == "init_oracle":
-        model.init_oracle(trainSet,args.dataset,float(args.perc_gt),float(args.perc_noise))
+        model.init_oracle(trainSet,args.dataset,float(args.perc_noise))
     else:
         raise ValueError("Unknown init method : {}".format(args.init_mode))
 
     torch.save(model.state_dict(), "../models/{}/model{}_epoch0".format(args.exp_id,args.ind_id))
+
+    #Write the parameters of the model and its confidence interval in a csv file
+    loss = model(trainSet)
+    paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch=0,scoresDis=args.score_dis,score_min=args.score_min,score_max=args.score_max)
 
     if not args.only_init:
         #Getting the contructor and the kwargs for the choosen optimizer
@@ -245,18 +270,12 @@ def main(argv=None):
 
         model.setPrior(args.prior,args.dataset)
 
-        #print(model.bias,F.sigmoid(model.incons),F.sigmoid(model.diffs),model.trueScores)
+        #print(model.bias,torch.sigmoid(model.incons),torch.sigmoid(model.diffs),model.trueScores)
         loss,epoch = train(model,optimConst,kwargs,trainSet, args)
-        #print(model.bias,F.sigmoid(model.incons),F.sigmoid(model.diffs),model.trueScores)
-
+        #print(model.bias,torch.sigmoid(model.incons),torch.sigmoid(model.diffs),model.trueScores)
 
         torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
-
-        #Write the parameters of the model and its confidence interval in a csv file
-    else:
-        loss = model(trainSet)
-
-    paramsToCsv(loss,model,args.exp_id,args.ind_id)
+        paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max)
 
 if __name__ == "__main__":
     main()
