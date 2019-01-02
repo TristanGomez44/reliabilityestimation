@@ -11,6 +11,11 @@ import torch
 import glob
 import numpy as np
 import random
+import matplotlib.pyplot as plt
+import sys
+
+from matplotlib.lines import Line2D
+import matplotlib.cm as cm
 def main(argv=None):
 
 
@@ -29,7 +34,6 @@ def main(argv=None):
     argreader.parser.add_argument('--nb_content', metavar='STD',type=int,default=25,help='The number of content')
 
     argreader.parser.add_argument('--dataset_id', metavar='STD',type=int,default=0,help='The dataset id')
-
     argreader.parser.add_argument('--continuous',action='store_true',help='To generate continuous scores instead of discrete ones')
 
     #Reading the comand line arg
@@ -61,26 +65,75 @@ def main(argv=None):
     #print(bias)
     scores = torch.zeros((nb_videos,args.nb_annot))
 
+    dx = 0.01
+    x_coord = torch.arange(0,1,dx)
+
+    meanList = []
+
+    colors = cm.rainbow(np.linspace(0, 1, nb_videos))
+
+    markers = [m for m, func in Line2D.markers.items() if func != 'nothing' and m not in Line2D.filled_markers]
+    if len(markers) < args.nb_annot:
+        markers = ["" for i in range(args.nb_annot)]
+    else:
+        markers = markers[:args.nb_annot]
+
+    plt.figure(figsize=(10,5))
+    plt.xlim(0,1)
+
     for i in range(nb_videos):
         for j in range(args.nb_annot):
 
-            normDis = Normal(trueScores[i]+bias[j], diffs[i//args.nb_video_per_content]+incons[j])
+            mean = trueScores[i]+bias[j]
+            var = torch.pow(diffs[i//args.nb_video_per_content],2)+torch.pow(incons[j],2)
+            #print("diff",diffs[i//args.nb_video_per_content],"incons",incons[j])
+            if args.score_dis == "Beta":
+
+                mean = torch.clamp(mean,args.score_min,args.score_max)
+                mean = betaNormalize(mean,args.score_min,args.score_max)
+
+                #mean = torch.sigmoid(mean)
+                #print("mean",mean,"var",var/args.div_beta_var)
+                alpha,beta = meanvar_to_alphabeta(mean,var/args.div_beta_var)
+
+                scoresDis = Beta(alpha,beta)
+                postProcessingFunc = lambda x:betaDenormalize(x,args.score_min,args.score_max)
+            elif args.score_dis == "Normal":
+                scoresDis = Normal(trueScores[i]+bias[j], diffs[i//args.nb_video_per_content]+incons[j])
+                postProcessingFunc = lambda x:identity(x,args.score_min,args.score_max)
 
             if not args.continuous:
-                probs = torch.zeros((5))
-                for k in range(1,6):
-                    probs[k-1] = normDis.cdf(torch.tensor(k))
+                probs = torch.zeros((args.score_max+1-args.score_min))
+                for k in range(args.score_min,args.score_max+1):
+
+                    value = torch.tensor(betaNormalize(k,args.score_min,args.score_max)).float()
+                    probs[k-1] = torch.exp(scoresDis.log_prob(value))
+
                 discDis = Multinomial(probs=probs)
 
-                scores[i,j] = discDis.sample().max(0)[1]+1
+                scores[i,j] = betaNormalize((discDis.sample().max(0)[1]+1).float(),args.score_min,args.score_max)
             else:
-                scores[i,j] = normDis.sample()
+                scores[i,j] = scoresDis.sample()
+
+            cdf = lambda x: torch.exp(scoresDis.log_prob(x))
+            #print("video",i,"annot",j)
+            plt.plot(x_coord.numpy(),cdf(x_coord).cpu().detach().numpy()[0],color=colors[i],marker=markers[j])
+
+
+            meanList.append(mean)
+
+            scores[i,j] = postProcessingFunc(scores[i,j])
+        plt.hist(betaNormalize(scores[i],args.score_min,args.score_max),alpha = 0.7,color=colors[i],range=(0,1),bins=5)
+
+    print(scores)
+
+    plt.savefig("../vis/artifData{}_scoreDis.png".format(args.dataset_id))
 
     #scores = scores.int()
     csv = "videos\tencode"+"".join(["\t{}".format(i) for i in range(args.nb_annot)])+"\n"
 
     for i in range(0,nb_videos):
-        csv += str(i//args.nb_video_per_content+1)+"\tvid{}".format(i)+"".join("\t{}".format(scores[i-1,j]) for j in range(args.nb_annot))+"\n"
+        csv += str(i//args.nb_video_per_content+1)+"\tvid{}".format(i)+"".join("\t{}".format(scores[i,j]) for j in range(args.nb_annot))+"\n"
 
     with open("../data/artifData{}_scores.csv".format(args.dataset_id),"w") as text_file:
         print(csv,file=text_file)
@@ -89,6 +142,30 @@ def main(argv=None):
     np.savetxt("../data/artifData{}_diffs.csv".format(args.dataset_id),diffs.numpy(),delimiter="\t")
     np.savetxt("../data/artifData{}_incons.csv".format(args.dataset_id),incons.numpy(),delimiter="\t")
     np.savetxt("../data/artifData{}_bias.csv".format(args.dataset_id),bias[:,0,0].numpy(),delimiter="\t")
+
+def meanvar_to_alphabeta(mean,var):
+
+    #print(torch.pow(mean,2))
+    alpha = ((1-mean)/var-1/mean)*torch.pow(mean,2)
+    #print(alpha)
+    beta = alpha*(1/mean-1)
+
+    return alpha,beta
+
+def identity(x,score_min,score_max):
+    return x
+
+def betaNormalize(x,score_min,score_max):
+
+    low = score_min-0.1
+    high = score_max+0.1
+
+    return (x-low)/(high-low)
+
+def betaDenormalize(x,score_min,score_max):
+    low = score_min-0.1
+    high = score_max+0.1
+    return x*(high-low)+low
 
 if __name__ == "__main__":
     main()
