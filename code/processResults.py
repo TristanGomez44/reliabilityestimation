@@ -20,10 +20,110 @@ import train_val
 import math
 import glob
 import matplotlib.cm as cm
-
+import generateData
 from torch.distributions.beta import Beta
 from torch.distributions.uniform import Uniform
 from torch.distributions.normal import Normal
+from matplotlib.lines import Line2D
+
+
+
+def distrPlot(dataset,exp_id,indModel):
+
+    modelConf = configparser.ConfigParser()
+    modelConf.read("../models/{}/model{}.ini".format(exp_id,indModel))
+    modelConf = modelConf['default']
+
+    xInt,distorNbList = load_data.loadData(dataset)
+
+    #Building the model
+    model = modelBuilder.modelMaker(xInt.size(1),len(xInt),distorNbList,int(modelConf["poly_deg"]),modelConf["score_dis"],\
+                                    int(modelConf["score_min"]),int(modelConf["score_max"]),float(modelConf["div_beta_var"]))
+    #model.init_oracle(xInt,dataset)
+    paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)))
+
+    colors = cm.rainbow(np.linspace(0, 1, xInt.size(0)))
+    markers = [m for m, func in Line2D.markers.items() if func != 'nothing' and m not in Line2D.filled_markers]
+    if len(markers) < xInt.size(1):
+        markers = ["" for i in range(xInt.size(1))]
+    else:
+        markers = markers[:xInt.size(1)]
+
+    paramKeys = ["bias","incons","diffs"]
+    tensorDict = {"bias":torch.zeros((len(paramsPaths),getattr(model,"bias").size(0))),\
+                  "incons":torch.zeros((len(paramsPaths),getattr(model,"incons").size(0))),\
+                  "diffs":torch.zeros((len(paramsPaths),getattr(model,"diffs").size(0)))}
+
+    for i,paramsPath in enumerate(paramsPaths):
+
+        epoch = findNumbers(os.path.basename(paramsPath).replace("model{}".format(indModel),""))
+        print("Processing epoch",epoch)
+        
+        model.load_state_dict(torch.load(paramsPath))
+
+        plt.figure(i,figsize=(10,5))
+        scoreDis = model.compScoreDis(xInt.is_cuda)
+
+        dx = 0.01
+        cdf = lambda x: torch.exp(scoreDis.log_prob(x))
+        x_coord = torch.arange(0,1,dx)
+        cdfs = cdf(x_coord)
+
+        cdfs = cdfs.view(cdfs.size(0)*cdfs.size(1),cdfs.size(2))
+
+        plt.figure(0)
+        for j,cdf in enumerate(cdfs):
+            #print("video",i%xInt.size(0),"annot",i//xInt.size(0))
+            plt.plot(x_coord.numpy(),cdf.cpu().detach().numpy(),color=colors[j//xInt.size(0)],marker=markers[j%xInt.size(1)])
+
+        for j in range(xInt.size(0)):
+            plt.hist(generateData.betaNormalize(xInt[j],int(modelConf["score_min"]),int(modelConf["score_max"])),alpha = 0.7,color=colors[j],range=(0,1),bins=5)
+
+        #Getting the correct x and y range to plot the other parameters distribution
+        for j,key in enumerate(paramKeys):
+            tensor = getattr(model,key).detach()
+            tensorDict[key][i] = tensor.view(-1)
+
+        plt.savefig("../vis/{}/scores_{}_epoch{}.png".format(exp_id,indModel,epoch))
+
+    xRangeDict = {}
+    #Ploting the distribution of the other parameters
+    for j,key in enumerate(paramKeys):
+        xMin = torch.min(tensorDict[key]).item()
+        xMax = torch.max(tensorDict[key]).item()
+        xRangeDict[key] = (xMin,xMax)
+
+        for i in range(len(tensorDict[key])):
+            plt.figure(j+i*len(paramKeys)+len(paramsPaths),figsize=(5,5))
+            plt.hist(tensorDict[key][i].detach().numpy(),range=xRangeDict[key])
+            plt.title(key)
+            plt.xlim(xRangeDict[key])
+            plt.ylim(0,len(tensorDict[key][i])*0.75)
+
+            epoch = findNumbers(os.path.basename(paramsPaths[i]).replace("model{}".format(indModel),""))
+            plt.savefig("../vis/{}/{}_{}_epoch{}.png".format(exp_id,key,indModel,epoch))
+
+def scatterPlot(dataset,exp_id,indModel):
+
+    plt.figure()
+
+    trueScores_gt = np.genfromtxt("../data/"+dataset+"_trueScores.csv")
+
+    modelConf = configparser.ConfigParser()
+    modelConf.read("../models/{}/model{}.ini".format(exp_id,indModel))
+    modelConf = modelConf['default']
+
+    trueScoresPathList = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,indModel)),key=findNumbers)
+    colors = cm.rainbow(np.linspace(0, 1, len(trueScoresPathList)))
+
+    for i,trueScoresPath in enumerate(trueScoresPathList):
+        print(trueScoresPath)
+        trueScores = np.genfromtxt(trueScoresPath)
+        epoch = findNumbers(os.path.basename(trueScoresPath).replace("model{}".format(indModel),""))
+        plt.plot(trueScores[:,0],trueScores_gt,"*",label="epoch{}".format(epoch),color=colors[i])
+
+    plt.legend()
+    plt.savefig("../vis/{}/scatterPlot_{}.png".format(exp_id,indModel))
 
 def fakeDataDIstr(args):
 
@@ -253,6 +353,7 @@ def computeConfInter(loss,model):
 
     for hessDiag in hessDiagList:
 
+        #print(hessDiag)
         confInter = 1.96/torch.sqrt(hessDiag)
         confInterList.append(confInter)
 
@@ -360,7 +461,7 @@ def extractParamName(path):
     path = os.path.basename(path).replace(".csv","")
     return path[path.find("_")+1:]
 
-def compareWithGroundTruth(exp_id,dataset,varParam):
+def compareWithGroundTruth(exp_id,dataset,varParams):
 
     paramFiles = glob.glob("../data/{}_*.csv".format(dataset))
     paramFiles.remove("../data/{}_scores.csv".format(dataset))
@@ -372,7 +473,7 @@ def compareWithGroundTruth(exp_id,dataset,varParam):
 
     paramsDicList = []
     modelConfigPaths = sorted(glob.glob("../models/{}/*.ini".format(exp_id)),key=findNumbers)
-    csvHead = "model"+"".join(["\t{}".format(paramNameList[i]) for i in range(len(paramNameList))])
+    csvHead = "{}".format(varParams)+"".join(["\t{}".format(paramNameList[i]) for i in range(len(paramNameList))])
 
     csvErr = ""
     csvInclu = ""
@@ -384,11 +485,16 @@ def compareWithGroundTruth(exp_id,dataset,varParam):
         config = configparser.ConfigParser()
         config.read(modelConfigPaths[i])
 
-        paramValue = config["default"][varParam]
+        paramValue = ""
+        for varParam in varParams:
+            paramValue += config["default"][varParam]+","
 
         paramDict = {}
         for paramName in paramNameList:
-             paramDict[paramName] = np.genfromtxt("../results/{}/model{}_{}.csv".format(exp_id,modelInd,paramName))
+
+            lastEpochPath = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,modelInd,paramName)),key=findNumbers)[-1]
+            lastEpoch = findNumbers(os.path.basename(lastEpochPath).replace("model{}".format(modelInd),""))
+            paramDict[paramName] = np.genfromtxt("../results/{}/model{}_epoch{}_{}.csv".format(exp_id,modelInd,lastEpoch,paramName))
 
         errors = error(paramDict,gtParamDict,paramNameList)
         csvErr += "{}".format(paramValue)+"".join(["\t{}".format(round(100*errors[i],2)) for i in range(len(errors))])+"\n"
@@ -421,10 +527,14 @@ def main(argv=None):
     argreader.parser.add_argument('--robust',action='store_true',help='To test the robustness of the model')
     argreader.parser.add_argument('--std_mean',action='store_true',help='To plot the std of score as function of mean score \
                                 with the parameters tuned to model this function')
-    argreader.parser.add_argument('--comp_gt',type=str,metavar='PARAM',help='To compare the parameters found with the ground truth parameters. Require a fake dataset. The argument should\
+    argreader.parser.add_argument('--comp_gt',type=str,nargs="*",metavar='PARAM',help='To compare the parameters found with the ground truth parameters. Require a fake dataset. The argument should\
                                     be the name of the parameter varying across the different models in the experiment.')
     argreader.parser.add_argument('--artif_data',action='store_true',help='To plot the real and empirical distribution of the parameters of a fake dataset. \
                                     The fake dataset to plot is set by the --dataset argument')
+    argreader.parser.add_argument('--distr_plot',type=int,help='To plot the distribution of each score for a given model. The argument value is the model id. \
+                                    The first argument should be the model id')
+    argreader.parser.add_argument('--scatter_plot',type=int,help='To plot the real and predicted scores of a fake dataset in a 2D plot. \
+                                    The first argument should be the model id')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -481,5 +591,10 @@ def main(argv=None):
     if args.artif_data:
         fakeDataDIstr(args)
 
+    if args.distr_plot:
+        distrPlot(args.dataset,args.exp_id,args.distr_plot)
+
+    if args.scatter_plot:
+        scatterPlot(args.dataset,args.exp_id,args.scatter_plot)
 if __name__ == "__main__":
     main()
