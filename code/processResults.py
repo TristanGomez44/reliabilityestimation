@@ -26,9 +26,7 @@ from torch.distributions.uniform import Uniform
 from torch.distributions.normal import Normal
 from matplotlib.lines import Line2D
 
-
-
-def distrPlot(dataset,exp_id,indModel):
+def distrPlot(dataset,exp_id,indModel,plotScoreDis=False):
 
     modelConf = configparser.ConfigParser()
     modelConf.read("../models/{}/model{}.ini".format(exp_id,indModel))
@@ -49,53 +47,69 @@ def distrPlot(dataset,exp_id,indModel):
     else:
         markers = markers[:xInt.size(1)]
 
-    paramKeys = ["bias","incons","diffs"]
+    paramKeys = ["bias","incons","diffs","trueScores"]
     tensorDict = {"bias":torch.zeros((len(paramsPaths),getattr(model,"bias").size(0))),\
                   "incons":torch.zeros((len(paramsPaths),getattr(model,"incons").size(0))),\
-                  "diffs":torch.zeros((len(paramsPaths),getattr(model,"diffs").size(0)))}
+                  "diffs":torch.zeros((len(paramsPaths),getattr(model,"diffs").size(0))),\
+                  "trueScores":torch.zeros((len(paramsPaths),getattr(model,"trueScores").size(0)))}
 
+    if plotScoreDis:
+        for i,paramsPath in enumerate(paramsPaths):
+
+            epoch = findNumbers(os.path.basename(paramsPath).replace("model{}".format(indModel),""))
+            print("Processing epoch",epoch)
+
+            model.load_state_dict(torch.load(paramsPath))
+
+            plt.figure(i,figsize=(10,5))
+            scoreDis = model.compScoreDis(xInt.is_cuda)
+
+            dx = 0.01
+            cdf = lambda x: torch.exp(scoreDis.log_prob(x))
+            x_coord = torch.arange(0,1,dx)
+            cdfs = cdf(x_coord)
+
+            cdfs = cdfs.view(cdfs.size(0)*cdfs.size(1),cdfs.size(2))
+
+            plt.figure(0)
+            for j,cdf in enumerate(cdfs):
+                #print("video",i%xInt.size(0),"annot",i//xInt.size(0))
+                plt.plot(x_coord.numpy(),cdf.cpu().detach().numpy(),color=colors[j//xInt.size(0)],marker=markers[j%xInt.size(1)])
+
+            for j in range(xInt.size(0)):
+                plt.hist(generateData.betaNormalize(xInt[j],int(modelConf["score_min"]),int(modelConf["score_max"])),alpha = 0.7,color=colors[j],range=(0,1),bins=5)
+
+            plt.savefig("../vis/{}/scores_{}_epoch{}.png".format(exp_id,indModel,epoch))
+
+    #Colllect the parameters at each epoch
     for i,paramsPath in enumerate(paramsPaths):
-
-        epoch = findNumbers(os.path.basename(paramsPath).replace("model{}".format(indModel),""))
-        print("Processing epoch",epoch)
-        
         model.load_state_dict(torch.load(paramsPath))
-
-        plt.figure(i,figsize=(10,5))
-        scoreDis = model.compScoreDis(xInt.is_cuda)
-
-        dx = 0.01
-        cdf = lambda x: torch.exp(scoreDis.log_prob(x))
-        x_coord = torch.arange(0,1,dx)
-        cdfs = cdf(x_coord)
-
-        cdfs = cdfs.view(cdfs.size(0)*cdfs.size(1),cdfs.size(2))
-
-        plt.figure(0)
-        for j,cdf in enumerate(cdfs):
-            #print("video",i%xInt.size(0),"annot",i//xInt.size(0))
-            plt.plot(x_coord.numpy(),cdf.cpu().detach().numpy(),color=colors[j//xInt.size(0)],marker=markers[j%xInt.size(1)])
-
-        for j in range(xInt.size(0)):
-            plt.hist(generateData.betaNormalize(xInt[j],int(modelConf["score_min"]),int(modelConf["score_max"])),alpha = 0.7,color=colors[j],range=(0,1),bins=5)
-
-        #Getting the correct x and y range to plot the other parameters distribution
         for j,key in enumerate(paramKeys):
             tensor = getattr(model,key).detach()
+
+            if (key =="diffs" or key=="incons") and modelConf["score_dis"] == "Beta":
+                tensor = torch.sigmoid(tensor)
+            if (key =="trueScores"):
+                tensor = torch.clamp(tensor,int(modelConf["score_min"]),int(modelConf["score_max"]))
+
             tensorDict[key][i] = tensor.view(-1)
 
-        plt.savefig("../vis/{}/scores_{}_epoch{}.png".format(exp_id,indModel,epoch))
-
     xRangeDict = {}
-    #Ploting the distribution of the other parameters
+    #Plot the distribution of the parameters
     for j,key in enumerate(paramKeys):
         xMin = torch.min(tensorDict[key]).item()
         xMax = torch.max(tensorDict[key]).item()
         xRangeDict[key] = (xMin,xMax)
 
+        print(xMin,xMax)
+
         for i in range(len(tensorDict[key])):
-            plt.figure(j+i*len(paramKeys)+len(paramsPaths),figsize=(5,5))
-            plt.hist(tensorDict[key][i].detach().numpy(),range=xRangeDict[key])
+            plt.figure(j+i*len(paramKeys)+len(paramsPaths),figsize=(10,5))
+            plt.hist(tensorDict[key][i].detach().numpy(),range=xRangeDict[key],alpha=0.5,color="blue")
+
+            plt.hist(np.genfromtxt("../data/{}_{}.csv".format(dataset,key)),range=xRangeDict[key],alpha=0.3,color="red")
+
+            #Plot ground truth distribution
             plt.title(key)
             plt.xlim(xRangeDict[key])
             plt.ylim(0,len(tensorDict[key][i])*0.75)
@@ -484,17 +498,23 @@ def compareWithGroundTruth(exp_id,dataset,varParams):
 
         config = configparser.ConfigParser()
         config.read(modelConfigPaths[i])
-
-        paramValue = ""
+        config = config["default"]
+        paramValue = ''
         for varParam in varParams:
-            paramValue += config["default"][varParam]+","
+            paramValue += config[varParam]+","
 
         paramDict = {}
         for paramName in paramNameList:
 
             lastEpochPath = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,modelInd,paramName)),key=findNumbers)[-1]
+
             lastEpoch = findNumbers(os.path.basename(lastEpochPath).replace("model{}".format(modelInd),""))
             paramDict[paramName] = np.genfromtxt("../results/{}/model{}_epoch{}_{}.csv".format(exp_id,modelInd,lastEpoch,paramName))
+
+            if (paramName =="trueScores"):
+                #print(paramDict[paramName])
+                paramDict[paramName] = np.clip(paramDict[paramName],int(config["score_min"]),int(config["score_max"]))
+                #print(paramDict[paramName])
 
         errors = error(paramDict,gtParamDict,paramNameList)
         csvErr += "{}".format(paramValue)+"".join(["\t{}".format(round(100*errors[i],2)) for i in range(len(errors))])+"\n"
@@ -533,6 +553,7 @@ def main(argv=None):
                                     The fake dataset to plot is set by the --dataset argument')
     argreader.parser.add_argument('--distr_plot',type=int,help='To plot the distribution of each score for a given model. The argument value is the model id. \
                                     The first argument should be the model id')
+    argreader.parser.add_argument('--param_distr_plot',type=int,help='Like --distr_plot but only plot the parameters distribution and not the scores distributions.')
     argreader.parser.add_argument('--scatter_plot',type=int,help='To plot the real and predicted scores of a fake dataset in a 2D plot. \
                                     The first argument should be the model id')
 
@@ -592,7 +613,10 @@ def main(argv=None):
         fakeDataDIstr(args)
 
     if args.distr_plot:
-        distrPlot(args.dataset,args.exp_id,args.distr_plot)
+        distrPlot(args.dataset,args.exp_id,args.distr_plot,plotScoreDis=True)
+
+    if args.param_distr_plot:
+        distrPlot(args.dataset,args.exp_id,args.param_distr_plot,plotScoreDis=False)
 
     if args.scatter_plot:
         scatterPlot(args.dataset,args.exp_id,args.scatter_plot)
