@@ -18,6 +18,9 @@ from torch.autograd import grad
 import random
 import processResults
 import generateData
+
+from torch.distributions.beta import Beta
+
 def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
 
     confInterList = processResults.computeConfInter(loss,model)
@@ -47,10 +50,51 @@ def addLossTerms(loss,model,weight,normSum,cuda):
         #print(loss)
     if normSum:
 
-        labels = torch.arange(1,6).float().unsqueeze(0).unsqueeze(0).expand(model.annotNb,model.videoNb,5)
-        scoreDis = model.compScoreDis(cuda)
-        normSum = torch.log(torch.exp(scoreDis.log_prob(labels)).sum(dim=2)).sum()
-        print(normSum)
+        labels = torch.arange(1,6).unsqueeze(0).unsqueeze(0)
+
+        amb_incon = model.ambInconsMatrix(cuda)
+        amb_incon = amb_incon.unsqueeze(2).expand(amb_incon.size(0),amb_incon.size(1),labels.size(2))
+
+        scor_bias = model.trueScoresBiasMatrix()
+        scor_bias = scor_bias.unsqueeze(2).expand(scor_bias.size(0),scor_bias.size(1),labels.size(2))
+
+        labels = labels.expand(amb_incon.size(0),amb_incon.size(1),labels.size(2)).float()
+
+        if model.score_dis == "Normal":
+
+            exponents = -torch.pow(labels-scor_bias,2)/(amb_incon)
+            normSum = torch.logsumexp(exponents,dim=2).sum()
+
+        elif model.score_dis == "Beta":
+
+            labels = generateData.betaNormalize(labels,model.score_min,model.score_max)
+
+            scor_bias = torch.clamp(scor_bias,model.score_min,model.score_max)
+            scor_bias = generateData.betaNormalize(scor_bias,model.score_min,model.score_max)
+            a,b = generateData.meanvar_to_alphabeta(scor_bias,amb_incon/model.div_beta_var)
+
+            scoresDis = Beta(1,1)
+            logConst = scoresDis._log_normalizer(a,b)
+            print(logConst.size())
+
+            #normSum = (torch.log((torch.pow(labels,alpha-1)*torch.pow(1-labels,beta-1)).sum(dim=2))+logConst.sum(dim=2)).sum()
+            normSum = logConst.sum()+torch.logsumexp((a-1)*torch.log(labels)+(b-1)*torch.log(1-labels),dim=2).sum()
+
+            #print(normSum.size())
+            #print()
+
+            tensor = (a-1)*torch.log(labels)+(b-1)*torch.log(1-labels)
+
+            #for i in range(tensor.size(0)):
+            #    for j in range(tensor.size(1)):
+            #        print(tensor[i,j])
+
+            #print(normSum.size())
+            sys.exit(0)
+
+        else:
+            raise ValueError("Unknown score distribution : {}".format(model.score_dis))
+
         loss += normSum
 
     return loss
@@ -199,8 +243,6 @@ def train(model,optimConst,kwargs,trainSet, args):
     print("\tStopped at epoch ",epoch)
     return loss,epoch
 
-
-
 def main(argv=None):
 
     #Getting arguments from config file and command line
@@ -269,6 +311,9 @@ def main(argv=None):
             args.lr = [args.lr]
 
         model.setPrior(args.prior,args.dataset)
+
+        print(model.diffs)
+        sys.exit(0)
 
         #print(model.bias,torch.sigmoid(model.incons),torch.sigmoid(model.diffs),model.trueScores)
         loss,epoch = train(model,optimConst,kwargs,trainSet, args)
