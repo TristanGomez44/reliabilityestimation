@@ -67,11 +67,7 @@ class MLE(nn.Module):
 
             scor_bias = torch.clamp(scor_bias,self.score_min,self.score_max)
             scor_bias = generateData.betaNormalize(scor_bias,self.score_min,self.score_max)
-            #scor_bias = torch.sigmoid(scor_bias)
-            #print(scor_bias[0,0],amb_incon[0,0]/self.div_beta_var)
             alpha,beta = generateData.meanvar_to_alphabeta(scor_bias,amb_incon/self.div_beta_var)
-            #print(alpha[0,0],beta[0,0])
-            #sys.exit(0)
 
             scoresDis = Beta(alpha.unsqueeze(2),beta.unsqueeze(2))
 
