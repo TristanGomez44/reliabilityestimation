@@ -26,7 +26,7 @@ from torch.distributions.uniform import Uniform
 from torch.distributions.normal import Normal
 from matplotlib.lines import Line2D
 
-def distrPlot(dataset,exp_id,indModel,plotScoreDis=False):
+def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
 
     modelConf = configparser.ConfigParser()
     modelConf.read("../models/{}/model{}.ini".format(exp_id,indModel))
@@ -42,18 +42,25 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False):
 
     colors = cm.rainbow(np.linspace(0, 1, xInt.size(0)))
     markers = [m for m, func in Line2D.markers.items() if func != 'nothing' and m not in Line2D.filled_markers]
-    if len(markers) < xInt.size(1):
+    if len(markers) < nbPlot:
         markers = ["" for i in range(xInt.size(1))]
     else:
         markers = markers[:xInt.size(1)]
 
     paramKeys = ["bias","incons","diffs","trueScores"]
-    tensorDict = {"bias":torch.zeros((len(paramsPaths),getattr(model,"bias").size(0))),\
-                  "incons":torch.zeros((len(paramsPaths),getattr(model,"incons").size(0))),\
-                  "diffs":torch.zeros((len(paramsPaths),getattr(model,"diffs").size(0))),\
-                  "trueScores":torch.zeros((len(paramsPaths),getattr(model,"trueScores").size(0)))}
+    tensorDict = {"bias":np.zeros((len(paramsPaths),getattr(model,"bias").size(0))),\
+                  "incons":np.zeros((len(paramsPaths),getattr(model,"incons").size(0))),\
+                  "diffs":np.zeros((len(paramsPaths),getattr(model,"diffs").size(0))),\
+                  "trueScores":np.zeros((len(paramsPaths),getattr(model,"trueScores").size(0)))}
+
+    indexs = np.random.choice(range(xInt.size(1)),size=nbPlot)
+    vidIndex = np.random.choice(range(xInt.size(0)),size=1)[0]
 
     if plotScoreDis:
+
+        maxCdfs=0
+        cdfsList = torch.zeros((len(paramsPaths),nbPlot,int(1/dx)))
+
         for i,paramsPath in enumerate(paramsPaths):
 
             epoch = findNumbers(os.path.basename(paramsPath).replace("model{}".format(indModel),""))
@@ -61,61 +68,71 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False):
 
             model.load_state_dict(torch.load(paramsPath))
 
-            plt.figure(i,figsize=(10,5))
             scoreDis = model.compScoreDis(xInt.is_cuda)
 
-            dx = 0.01
             cdf = lambda x: torch.exp(scoreDis.log_prob(x))
             x_coord = torch.arange(0,1,dx)
             cdfs = cdf(x_coord)
 
-            cdfs = cdfs.view(cdfs.size(0)*cdfs.size(1),cdfs.size(2))
+            cdfs = cdfs[vidIndex,indexs]
 
-            plt.figure(0)
-            for j,cdf in enumerate(cdfs):
-                #print("video",i%xInt.size(0),"annot",i//xInt.size(0))
-                plt.plot(x_coord.numpy(),cdf.cpu().detach().numpy(),color=colors[j//xInt.size(0)],marker=markers[j%xInt.size(1)])
+            #cdfs = cdfs.view(cdfs.size(0)*cdfs.size(1),cdfs.size(2))
+            #cdfs = cdfs[indexs]
 
-            for j in range(xInt.size(0)):
-                plt.hist(generateData.betaNormalize(xInt[j],int(modelConf["score_min"]),int(modelConf["score_max"])),alpha = 0.7,color=colors[j],range=(0,1),bins=5)
+            if cdfs[:,5:-5].max() > maxCdfs:
+                maxCdfs = cdfs[:,5:-5].max()
+
+            cdfsList[i] = cdfs
+
+        #Wrinting the images with the correct range
+        for i,paramsPath in enumerate(paramsPaths):
+
+            epoch = findNumbers(os.path.basename(paramsPath).replace("model{}".format(indModel),""))
+            plt.figure(i)
+            subplot = plt.subplot(2,1,1)
+
+            subplot.set_ylim((0,maxCdfs.item()))
+            for j,(k,cdf) in enumerate(zip(indexs,cdfs)):
+                subplot.plot(x_coord.numpy(),cdfsList[i,j].detach().numpy(),color=colors[vidIndex],marker=markers[j])
+
+            subplot = plt.subplot(2,1,2)
+            subplot.hist(generateData.betaNormalize(xInt[vidIndex].detach().numpy(),int(modelConf["score_min"]),int(modelConf["score_max"])),color=colors[vidIndex],range=(0,1))
 
             plt.savefig("../vis/{}/scores_{}_epoch{}.png".format(exp_id,indModel,epoch))
+            plt.close()
 
-    #Colllect the parameters at each epoch
-    for i,paramsPath in enumerate(paramsPaths):
-        model.load_state_dict(torch.load(paramsPath))
-        for j,key in enumerate(paramKeys):
-            tensor = getattr(model,key).detach()
-
-            if (key =="diffs" or key=="incons") and modelConf["score_dis"] == "Beta":
-                tensor = torch.sigmoid(tensor)
-            if (key =="trueScores"):
-                tensor = torch.clamp(tensor,int(modelConf["score_min"]),int(modelConf["score_max"]))
-
-            tensorDict[key][i] = tensor.view(-1)
+    for key in paramKeys:
+        tensorPathList = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,indModel,key)),key=findNumbers)
+        print(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,indModel,key)))
+        for i,tensorPath in enumerate(tensorPathList):
+            tensorDict[key][i] = np.genfromtxt(tensorPath)[:,0].reshape(-1)
 
     xRangeDict = {}
     #Plot the distribution of the parameters
-    for j,key in enumerate(paramKeys):
-        xMin = torch.min(tensorDict[key]).item()
-        xMax = torch.max(tensorDict[key]).item()
+    for i,key in enumerate(paramKeys):
+        xMin = np.min(tensorDict[key])
+        xMax = np.max(tensorDict[key])
         xRangeDict[key] = (xMin,xMax)
 
-        print(xMin,xMax)
-
-        for i in range(len(tensorDict[key])):
-            plt.figure(j+i*len(paramKeys)+len(paramsPaths),figsize=(10,5))
-            plt.hist(tensorDict[key][i].detach().numpy(),range=xRangeDict[key],alpha=0.5,color="blue")
-
-            plt.hist(np.genfromtxt("../data/{}_{}.csv".format(dataset,key)),range=xRangeDict[key],alpha=0.3,color="red")
+        for j in range(len(tensorDict[key])):
+            plt.figure(i+j*len(paramKeys)+len(paramsPaths),figsize=(10,5))
+            plt.title(key)
 
             #Plot ground truth distribution
-            plt.title(key)
-            plt.xlim(xRangeDict[key])
-            plt.ylim(0,len(tensorDict[key][i])*0.75)
+            subplot = plt.subplot(2,1,1)
+            subplot.set_xlim(xRangeDict[key])
+            subplot.set_ylim(0,len(tensorDict[key][j])*0.5)
+            subplot.hist(np.genfromtxt("../data/{}_{}.csv".format(dataset,key)),range=xRangeDict[key],color="red")
 
-            epoch = findNumbers(os.path.basename(paramsPaths[i]).replace("model{}".format(indModel),""))
+            #Plot predicted distribution
+            subplot = plt.subplot(2,1,2)
+            subplot.set_xlim(xRangeDict[key])
+            subplot.set_ylim(0,len(tensorDict[key][j])*0.5)
+            subplot.hist(tensorDict[key][j],range=xRangeDict[key],color="blue")
+
+            epoch = findNumbers(os.path.basename(paramsPaths[j]).replace("model{}".format(indModel),""))
             plt.savefig("../vis/{}/{}_{}_epoch{}.png".format(exp_id,key,indModel,epoch))
+            plt.close()
 
 def scatterPlot(dataset,exp_id,indModel):
 
@@ -332,8 +349,6 @@ def robustness(model,trainSet,distorNbList,args,paramValues,paramName,corrKwargs
                 mos_err[i,j] = RMSE(mos_mean_ref,mos_mean)
                 sr_err[i,j] = RMSE(sr_mean_ref,sr_mean)
                 zs_sr_err[i,j] = RMSE(zs_sr_mean_ref,zs_sr_mean)
-
-            #sys.exit(0)
 
         np.savetxt("../results/{}/mle_err_epoch{}.csv".format(args.exp_id,args.epochs),mle_err.reshape(mle_err.shape[0],mle_err.shape[1]*mle_err.shape[2]))
         np.savetxt("../results/{}/mos_err_epoch{}.csv".format(args.exp_id,args.epochs),mos_err)
@@ -562,6 +577,11 @@ def main(argv=None):
 
     #Getting the args from command line and config file
     args = argreader.args
+
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+
 
     #The folders where the experience file will be written
     if not (os.path.exists("../vis/{}".format(args.exp_id))):
