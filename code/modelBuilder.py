@@ -44,6 +44,10 @@ class MLE(nn.Module):
 
         self.div_beta_var = div_beta_var
 
+        self.prior = None
+        self.disDict = None
+        self.paramProc = None
+
     def forward(self,xInt):
 
         x = xInt.float()
@@ -203,7 +207,8 @@ class MLE(nn.Module):
     def oraclePrior(self,loss):
         for param in self.disDict.keys():
 
-            loss -= self.disDict[param].log_prob(torch.sigmoid(getattr(self,param))).sum()
+            loss -= self.disDict[param].log_prob(getattr(self,param)).sum()
+
             #print(param,getattr(self,param),self.disDict[param].log_prob(getattr(self,param)))
         return loss
 
@@ -215,14 +220,24 @@ class MLE(nn.Module):
             self.disDict = {}
             dataConf = configparser.ConfigParser()
             dataConf.read("../data/{}.ini".format(dataset))
+
+            #self.disDict = {"diffs":Beta(float(dataConf['diff_alpha']), float(dataConf["diff_beta"])), \
+            #                "incons":Beta(float(dataConf["incons_alpha"]), float(dataConf["incons_beta"])),\
+            #                "bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
+
+            #self.paramProc = {"diffs":lambda x:torch.sigmoid(x), \
+            #                 "incons":lambda x:torch.sigmoid(x),\
+            #                 "bias":lambda x:x}
+
             dataConf = dataConf['default']
-            self.disDict = {"diffs":Beta(float(dataConf['diff_alpha']), float(dataConf["diff_beta"])), \
-                            "incons":Beta(float(dataConf["incons_alpha"]), float(dataConf["incons_beta"])),\
-                            "bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
+            self.disDict = {"bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
+
+            self.paramProc = {"bias":lambda x:x}
 
         elif priorName == "uniform":
             self.prior = self.unifPrior
             self.disDict = None
+            self.paramProc = None
         else:
             raise ValueError("No such prior : {}".format(priorName))
 
