@@ -28,13 +28,11 @@ def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
 
     for i,tensor in enumerate(model.parameters()):
 
-
-        if keys[i] == "diffs" or keys[i] == "incons":
-            tensor = torch.sigmoid(tensor)
-
-        #if keys[i] ==  "trueScores":
-        #    tensor = generateData.betaDenormalize(tensor,score_min,score_max)
-        #    tensor = torch.clamp(tensor,score_min,score_max)
+        if model.score_dis == "Beta":
+            if (keys[i] =="diffs" or keys[i]=="incons"):
+                tensor = torch.sigmoid(tensor)
+            if keys[i] ==  "trueScores":
+                tensor = torch.clamp(tensor,score_min,score_max)
 
         tensor = tensor.cpu().detach().numpy().reshape(-1)[:,np.newaxis]
 
@@ -46,7 +44,7 @@ def addLossTerms(loss,model,weight,normSum,cuda):
     #print("Adding loss terms")
     #print(loss)
     if weight>0:
-        loss -= weight*model.prior(loss)
+        loss = weight*model.prior(loss)
         #print(loss)
     if normSum:
 
@@ -75,7 +73,6 @@ def addLossTerms(loss,model,weight,normSum,cuda):
 
             scoresDis = Beta(1,1)
             logConst = scoresDis._log_normalizer(a,b)
-            print(logConst.size())
 
             #normSum = (torch.log((torch.pow(labels,alpha-1)*torch.pow(1-labels,beta-1)).sum(dim=2))+logConst.sum(dim=2)).sum()
             normSum = logConst.sum()+torch.logsumexp((a-1)*torch.log(labels)+(b-1)*torch.log(1-labels),dim=2).sum()
@@ -90,7 +87,6 @@ def addLossTerms(loss,model,weight,normSum,cuda):
             #        print(tensor[i,j])
 
             #print(normSum.size())
-            sys.exit(0)
 
         else:
             raise ValueError("Unknown score distribution : {}".format(model.score_dis))
@@ -311,9 +307,6 @@ def main(argv=None):
             args.lr = [args.lr]
 
         model.setPrior(args.prior,args.dataset)
-
-        print(model.diffs)
-        sys.exit(0)
 
         #print(model.bias,torch.sigmoid(model.incons),torch.sigmoid(model.diffs),model.trueScores)
         loss,epoch = train(model,optimConst,kwargs,trainSet, args)
