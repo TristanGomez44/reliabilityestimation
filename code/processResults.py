@@ -451,12 +451,11 @@ def error(dictPred,dictGT,paramNames):
     errList = []
 
     for name in paramNames:
-
         errList.append(errorVec(dictPred[name][:,0],dictGT[name]))
 
     return errList
 
-def errorVec(vec_ref,vec):
+def errorVec(vec,vec_ref):
 
     if not (type(vec) is np.ndarray):
         if vec.is_cuda:
@@ -525,11 +524,6 @@ def compareWithGroundTruth(exp_id,dataset,varParams):
 
             lastEpoch = findNumbers(os.path.basename(lastEpochPath).replace("model{}".format(modelInd),""))
             paramDict[paramName] = np.genfromtxt("../results/{}/model{}_epoch{}_{}.csv".format(exp_id,modelInd,lastEpoch,paramName))
-
-            if (paramName =="trueScores"):
-                #print(paramDict[paramName])
-                paramDict[paramName] = np.clip(paramDict[paramName],int(config["score_min"]),int(config["score_max"]))
-                #print(paramDict[paramName])
 
         errors = error(paramDict,gtParamDict,paramNameList)
         csvErr += "{}".format(paramValue)+"".join(["\t{}".format(round(100*errors[i],2)) for i in range(len(errors))])+"\n"
