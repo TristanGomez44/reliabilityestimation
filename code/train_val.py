@@ -18,6 +18,7 @@ from torch.autograd import grad
 import random
 import processResults
 import generateData
+import glob
 
 from torch.distributions.beta import Beta
 
@@ -248,6 +249,9 @@ def main(argv=None):
     argreader.parser.add_argument('--only_init',action='store_true',help='To initialise a model without training it.\
                                                                         This still computes the confidence intervals')
 
+    argreader.parser.add_argument('--init_path',type=str,metavar="N",help='The index of the model to use as initialisation. \
+                                                                            The weight of the last epoch will be used.')
+
     #Reading the comand line arg
     argreader.getRemainingArgs()
 
@@ -283,12 +287,13 @@ def main(argv=None):
         model = model.cuda()
 
     #Inititialise the model
-    if args.init_mode == "init_base":
-        model.init_base(trainSet)
-    elif args.init_mode == "init_oracle":
-        model.init_oracle(trainSet,args.dataset,float(args.perc_noise))
+    if args.start_mode == "init":
+        model.init(trainSet,args.dataset,args.param_not_gt)
+    elif args.start_mode == "fine_tune":
+        init_path = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,args.init_path)),key=processResults.findNumbers)[-1]
+        model.load_state_dict(torch.load(init_path))
     else:
-        raise ValueError("Unknown init method : {}".format(args.init_mode))
+        raise ValueError("Unknown init method : {}".format(args.start_mode))
 
     torch.save(model.state_dict(), "../models/{}/model{}_epoch0".format(args.exp_id,args.ind_id))
 
