@@ -37,15 +37,9 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
     #Building the model
     model = modelBuilder.modelMaker(xInt.size(1),len(xInt),distorNbList,int(modelConf["poly_deg"]),modelConf["score_dis"],\
                                     int(modelConf["score_min"]),int(modelConf["score_max"]),float(modelConf["div_beta_var"]))
-    #model.init_oracle(xInt,dataset)
-    paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)))
 
-    colors = cm.rainbow(np.linspace(0, 1, xInt.size(0)))
-    markers = [m for m, func in Line2D.markers.items() if func != 'nothing' and m not in Line2D.filled_markers]
-    if len(markers) < nbPlot:
-        markers = ["" for i in range(xInt.size(1))]
-    else:
-        markers = markers[:xInt.size(1)]
+    paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)))
+    print(paramsPaths)
 
     paramKeys = ["bias","incons","diffs","trueScores"]
     tensorDict = {"bias":np.zeros((len(paramsPaths),getattr(model,"bias").size(0))),\
@@ -57,6 +51,13 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
     vidIndex = np.random.choice(range(xInt.size(0)),size=1)[0]
 
     if plotScoreDis:
+
+        colors = cm.rainbow(np.linspace(0, 1, xInt.size(0)))
+        markers = [m for m, func in Line2D.markers.items() if func != 'nothing' and m not in Line2D.filled_markers]
+        if len(markers) < nbPlot:
+            markers = ["" for i in range(xInt.size(1))]
+        else:
+            markers = markers[:xInt.size(1)]
 
         maxCdfs=0
         cdfsList = torch.zeros((len(paramsPaths),nbPlot,int(1/dx)))
@@ -103,7 +104,6 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
 
     for key in paramKeys:
         tensorPathList = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,indModel,key)),key=findNumbers)
-        print(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,indModel,key)))
         for i,tensorPath in enumerate(tensorPathList):
             tensorDict[key][i] = np.genfromtxt(tensorPath)[:,0].reshape(-1)
 
@@ -112,7 +112,15 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
     for i,key in enumerate(paramKeys):
         xMin = np.min(tensorDict[key])
         xMax = np.max(tensorDict[key])
-        xRangeDict[key] = (xMin,xMax)
+
+        if key=="bias":
+            if np.abs(xMin) > xMax:
+                maxVal = np.abs(xMin)
+            else:
+                maxVal = xMax
+            xRangeDict[key] = (-maxVal,maxVal)
+        else:
+            xRangeDict[key] = (xMin,xMax)
 
         for j in range(len(tensorDict[key])):
             plt.figure(i+j*len(paramKeys)+len(paramsPaths),figsize=(10,5))
@@ -133,6 +141,58 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
             epoch = findNumbers(os.path.basename(paramsPaths[j]).replace("model{}".format(indModel),""))
             plt.savefig("../vis/{}/{}_{}_epoch{}.png".format(exp_id,key,indModel,epoch))
             plt.close()
+
+
+def plotBias(dataset,exp_id):
+
+    indList = list(map(lambda x:os.path.basename(x).replace("model","").replace(".ini",""),sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)))
+    paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indList[0])))
+    print(paramsPaths)
+    tensor = np.zeros((len(indList),len(paramsPaths),len(np.genfromtxt("../results/{}/model{}_epoch0_bias.csv".format(exp_id,indList[0])))))
+    print((len(indList),len(paramsPaths),len(np.genfromtxt("../results/{}/model{}_epoch0_bias.csv".format(exp_id,indList[0])))))
+
+    for k,indModel in enumerate(indList):
+
+        tensorPathList = sorted(glob.glob("../results/{}/model{}_epoch*_bias.csv".format(exp_id,indModel)),key=findNumbers)
+        for i,tensorPath in enumerate(tensorPathList):
+            tensor[k,i] = np.genfromtxt(tensorPath)[:,0].reshape(-1)
+
+    xMin = np.min(tensor)
+    xMax = np.max(tensor)
+
+    xRangeDict = (xMin,xMax)
+
+    for k,indModel in enumerate(indList):
+
+        paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)),key=findNumbers)
+
+        #Plot the bias error as a function of the absolute value of the bias
+        for j in range(len(tensor[k])):
+
+            epoch = findNumbers(os.path.basename(paramsPaths[j]).replace("model{}".format(indModel),""))
+            bias_gt = np.genfromtxt("../data/{}_bias.csv".format(dataset))
+
+            plt.figure(2*j,figsize=(10,5))
+            error = (np.abs(bias_gt-tensor[k,j])/np.abs(bias_gt))
+            plt.xlim(0,max(np.abs(xRangeDict[0]),np.abs(xRangeDict[1])))
+            plt.plot(np.abs(tensor[k,j]),error,"*",label=indModel)
+            if k==len(indList)-1:
+                plt.legend()
+                plt.savefig("../vis/{}/biasError_epoch{}.png".format(exp_id,epoch))
+                plt.close()
+
+            plt.figure(2*j+1,figsize=(10,5))
+            plt.plot(bias_gt,tensor[k,j],"*",label=indModel)
+            x = np.arange(xRangeDict[0],xRangeDict[1],0.01)
+            plt.plot(x,x)
+
+            plt.xlim(xRangeDict)
+            plt.ylim(xRangeDict)
+
+            if k==len(indList)-1:
+                plt.legend()
+                plt.savefig("../vis/{}/biasVSgt_epoch{}.png".format(exp_id,epoch))
+                plt.close()
 
 def scatterPlot(dataset,exp_id,indModel):
 
@@ -565,6 +625,7 @@ def main(argv=None):
     argreader.parser.add_argument('--param_distr_plot',type=int,help='Like --distr_plot but only plot the parameters distribution and not the scores distributions.')
     argreader.parser.add_argument('--scatter_plot',type=int,help='To plot the real and predicted scores of a fake dataset in a 2D plot. \
                                     The first argument should be the model id')
+    argreader.parser.add_argument('--plot_bias',action='store_true',help='To plot the error of every bias parameters at each epoch for each model')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -634,5 +695,8 @@ def main(argv=None):
 
     if args.scatter_plot:
         scatterPlot(args.dataset,args.exp_id,args.scatter_plot)
+
+    if args.plot_bias:
+        plotBias(args.dataset,args.exp_id)
 if __name__ == "__main__":
     main()
