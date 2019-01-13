@@ -168,7 +168,7 @@ class MLE(nn.Module):
 
         self.setParams(annot_bias,annot_incons,video_ambTensor,vid_score)
 
-    def init_oracle(self,dataInt,datasetName,percNoise=0):
+    def init(self,dataInt,datasetName,paramNotGT):
 
         self.init_base(dataInt)
         paramNameList = list(self.state_dict().keys())
@@ -178,28 +178,51 @@ class MLE(nn.Module):
             gtParamDict[paramName] = np.genfromtxt("../data/{}_{}.csv".format(datasetName,paramName))
 
         for key in paramNameList:
-            tensor = getattr(self,key).clone()
-            tensor = torch.tensor(gtParamDict[key]).view(tensor.size()).float()
+
+            tensor = torch.tensor(gtParamDict[key]).view(getattr(self,key).size()).float()
 
             oriSize = tensor.size()
             tensor = tensor.view(-1)
 
-            meanAbsVal = torch.abs(tensor).mean()
-            gaussDis = Normal(torch.zeros(tensor.size(0)), 0.5*percNoise*meanAbsVal*torch.eye(tensor.size(0)))
+            #meanAbsVal = torch.abs(tensor).mean()
+            #gaussDis = Normal(torch.zeros(tensor.size(0)), 0.5*percNoise*meanAbsVal*torch.eye(tensor.size(0)))
 
-            noise = torch.diag(gaussDis.sample())
-            tensor += noise
+            #noise = torch.diag(gaussDis.sample())
+            #tensor += noise
 
             tensor = tensor.view(oriSize)
 
-            #if key == "trueScores":
-            #    tensor = generateData.betaNormalize(tensor,self.score_min,self.score_max)
-
-            #print(key,tensor)
             if key == "incons" or key == "diffs":
                 tensor = torch.log(tensor/(1-tensor))
 
             setattr(self,key,nn.Parameter(tensor))
+
+        for key in paramNotGT:
+            print("Initialising")
+            initFunc = getattr(self,"init_{}".format(key))
+            setattr(self,key,nn.Parameter(initFunc(dataInt)))
+
+    def init_trueScores(self,dataInt):
+        return dataInt.mean(dim=1)
+
+    def init_bias(self,dataInt):
+        return (dataInt-self.trueScores.unsqueeze(1).expand_as(dataInt)).mean(dim=0)
+
+    def init_diff(self,dataInt):
+
+        video_amb = torch.pow(self.trueScoresBiasMatrix()-dataInt,2).mean(dim=1)
+        content_amb = torch.zeros(len(self.distorNbList))
+        sumInd = 0
+
+        for i in range(len(self.distorNbList)):
+
+            content_amb = video_amb[sumInd:sumInd+self.distorNbList[i]].mean()
+            sumInd += self.distorNbList[i]
+
+        return content_amb
+
+    def init_incons(self,dataInt):
+        return torch.sqrt(torch.pow(self.trueScoresBiasMatrix()-dataInt,2).mean(dim=0))
 
     def unifPrior(self,loss):
         return loss
