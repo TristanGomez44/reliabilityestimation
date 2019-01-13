@@ -18,7 +18,10 @@ def str2FloatList(x):
     else:
         return [float(elem) for elem in x.split(",")]
 def strToStrList(x):
-    return x.split(",")
+    if x == "None":
+        return []
+    else:
+        return x.split(",")
 
 def str2StrList(x):
     '''Convert a string to a list of string value'''
@@ -131,8 +134,8 @@ class ArgReader():
         self.parser.add_argument('--model_values', type=str2FloatList, nargs='+',metavar='V',
                             help='The values the varying model parameter has to have during robustness evaluation')
 
-        self.parser.add_argument('--init_mode', type=str,metavar='P',
-                    help='The mode to use to initialise the model. Can be \'init_base\' or \'init_oracle\'.')
+        self.parser.add_argument('--start_mode', type=str,metavar='P',
+                    help='The mode to use to initialise the model. Can be \'init\' or \'fine_tune\'.')
 
         self.parser.add_argument('--perc_noise', type=float,metavar='S',
                         help='For \'init_oracle\' initialisation mode, the norm of the gaussian noise added to params, relative to their norm.')
@@ -143,6 +146,9 @@ class ArgReader():
 
         self.parser.add_argument('--param_to_opti', type=strToStrList,metavar='V',
                             help="The parameters to optimise. Can be a list with elements among 'bias','incons','diffs','trueScores'")
+        self.parser.add_argument('--param_not_gt',type=strToStrList,metavar='V',
+                            help="The parameters to set to ground truth when not starting the training witha pre-trained net \
+                                (i.e. choosing option 'init' for --start_mode). Can be a list (possibly empty) with elements among 'bias','incons','diffs','trueScores'")
 
         self.parser.add_argument('--note', type=str,metavar='NOTE',
                             help="A note on the model")
