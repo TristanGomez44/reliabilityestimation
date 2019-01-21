@@ -223,21 +223,19 @@ def train(model,optimConst,kwargs,trainSet, args):
                 lrCounter += 1
 
         #print(model.state_dict()["diffs"])
-        old_score = model.state_dict()["trueScores"].clone()
+        old_score = model.getFlatParam().clone()
         loss = one_epoch_train(model,optimizer,trainSet,epoch, args,args.lr[lrCounter])
         #print(model.state_dict()["diffs"])
         #sys.exit(0)
 
-
-
-        dist = torch.sqrt(torch.pow(old_score-model.state_dict()["trueScores"],2).sum())
+        dist = torch.sqrt(torch.pow(old_score-model.getFlatParam(),2).sum())
         epoch += 1
 
         if epoch%args.log_interval==0:
             paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max)
             torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
 
-    print("\tStopped at epoch ",epoch)
+    print("\tStopped at epoch ",epoch,"dist",dist.item())
     return loss,epoch
 
 def main(argv=None):
