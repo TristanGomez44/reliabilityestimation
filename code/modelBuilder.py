@@ -198,9 +198,15 @@ class MLE(nn.Module):
             setattr(self,key,nn.Parameter(tensor))
 
         for key in paramNotGT:
-            print("Initialising")
+
             initFunc = getattr(self,"init_{}".format(key))
-            setattr(self,key,nn.Parameter(initFunc(dataInt)))
+
+            if key=="diffs" or key=="incons":
+                tensor = initFunc(dataInt)
+                tensor = torch.log(tensor/(1-tensor))
+                setattr(self,key,nn.Parameter(tensor))
+            else:
+                setattr(self,key,nn.Parameter(initFunc(dataInt)))
 
     def init_trueScores(self,dataInt):
         return dataInt.mean(dim=1)
@@ -208,20 +214,21 @@ class MLE(nn.Module):
     def init_bias(self,dataInt):
         return (dataInt-self.trueScores.unsqueeze(1).expand_as(dataInt)).mean(dim=0)
 
-    def init_diff(self,dataInt):
+    def init_diffs(self,dataInt):
 
         video_amb = torch.pow(self.trueScoresBiasMatrix()-dataInt,2).mean(dim=1)
-        content_amb = torch.zeros(len(self.distorNbList))
+        content_amb = torch.zeros(len(self.distorNbList),1)
         sumInd = 0
 
         for i in range(len(self.distorNbList)):
 
-            content_amb = video_amb[sumInd:sumInd+self.distorNbList[i]].mean()
+            content_amb[i] = video_amb[sumInd:sumInd+self.distorNbList[i]].mean()
             sumInd += self.distorNbList[i]
 
         return content_amb
 
     def init_incons(self,dataInt):
+
         return torch.sqrt(torch.pow(self.trueScoresBiasMatrix()-dataInt,2).mean(dim=0))
 
     def unifPrior(self,loss):
@@ -293,6 +300,10 @@ class MLE(nn.Module):
         w_es_sq = torch.pow(w_es,2)
 
         incons_new = v - ((w_es*v-w_es_sq*v*torch.pow(x-scor-bias,2))/()).sum(dim=0)
+
+    def getFlatParam(self):
+
+        return torch.cat((self.trueScores,self.bias,self.incons.view(-1),self.diffs.view(-1)),dim=0)
 
 def subRej(dataTorch):
 
