@@ -51,7 +51,7 @@ def main(argv=None):
     if args.cuda:
         torch.cuda.manual_seed(args.seed)
 
-    trueScoreDis = Uniform(1,5)
+    trueScoreDis = Uniform(args.score_min,args.score_max)
     diffDis = Beta(args.diff_alpha, args.diff_beta)
     inconsDis = Beta(args.incons_alpha, args.incons_beta)
     biasDis = Normal(torch.zeros(1), args.bias_std*torch.eye(1))
@@ -123,7 +123,7 @@ def main(argv=None):
             meanList.append(mean)
 
             scores[i,j] = postProcessingFunc(scores[i,j])
-        plt.hist(betaNormalize(scores[i],args.score_min,args.score_max),alpha = 0.7,color=colors[i],range=(0,1),bins=5)
+        #plt.hist(betaNormalize(scores[i],args.score_min,args.score_max),alpha = 0.7,color=colors[i],range=(0,1),bins=5)
 
     print(scores)
 
