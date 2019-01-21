@@ -25,7 +25,7 @@ from torch.distributions.beta import Beta
 from torch.distributions.uniform import Uniform
 from torch.distributions.normal import Normal
 from matplotlib.lines import Line2D
-
+import math
 def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
 
     modelConf = configparser.ConfigParser()
@@ -60,8 +60,7 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
             markers = markers[:xInt.size(1)]
 
         maxCdfs=0
-        cdfsList = torch.zeros((len(paramsPaths),nbPlot,int(1/dx)))
-
+        cdfsList = torch.zeros((len(paramsPaths),nbPlot,int(1/dx)+1))
         for i,paramsPath in enumerate(paramsPaths):
 
             epoch = findNumbers(os.path.basename(paramsPath).replace("model{}".format(indModel),""))
@@ -82,7 +81,6 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
 
             if cdfs[:,5:-5].max() > maxCdfs:
                 maxCdfs = cdfs[:,5:-5].max()
-
             cdfsList[i] = cdfs
 
         #Wrinting the images with the correct range
@@ -142,57 +140,72 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
             plt.savefig("../vis/{}/{}_{}_epoch{}.png".format(exp_id,key,indModel,epoch))
             plt.close()
 
+def plotParam(dataset,exp_id,indList):
 
-def plotBias(dataset,exp_id):
+    keys = ["bias","incons","diffs","trueScores"]
 
-    indList = list(map(lambda x:os.path.basename(x).replace("model","").replace(".ini",""),sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)))
+    #indList = list(map(lambda x:os.path.basename(x).replace("model","").replace(".ini",""),sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)))
+
     paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indList[0])))
-    print(paramsPaths)
-    tensor = np.zeros((len(indList),len(paramsPaths),len(np.genfromtxt("../results/{}/model{}_epoch0_bias.csv".format(exp_id,indList[0])))))
-    print((len(indList),len(paramsPaths),len(np.genfromtxt("../results/{}/model{}_epoch0_bias.csv".format(exp_id,indList[0])))))
+    colors = cm.rainbow(np.linspace(0, 1,len(indList)))
 
-    for k,indModel in enumerate(indList):
+    for key in keys:
 
-        tensorPathList = sorted(glob.glob("../results/{}/model{}_epoch*_bias.csv".format(exp_id,indModel)),key=findNumbers)
-        for i,tensorPath in enumerate(tensorPathList):
-            tensor[k,i] = np.genfromtxt(tensorPath)[:,0].reshape(-1)
+        tensor = np.zeros((len(indList),len(paramsPaths),len(np.genfromtxt("../results/{}/model{}_epoch0_{}.csv".format(exp_id,indList[0],key)))))
 
-    xMin = np.min(tensor)
-    xMax = np.max(tensor)
+        for k,indModel in enumerate(indList):
 
-    xRangeDict = (xMin,xMax)
+            tensorPathList = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,indModel,key)),key=findNumbers)
+            for i,tensorPath in enumerate(tensorPathList):
+                tensor[k,i] = np.genfromtxt(tensorPath)[:,0].reshape(-1)
 
-    for k,indModel in enumerate(indList):
+        xMin = np.min(tensor)
+        xMax = np.max(tensor)
 
-        paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)),key=findNumbers)
+        xRangeDict = (xMin-0.1,xMax+0.1)
 
-        #Plot the bias error as a function of the absolute value of the bias
-        for j in range(len(tensor[k])):
+        maxErr = 0
 
-            epoch = findNumbers(os.path.basename(paramsPaths[j]).replace("model{}".format(indModel),""))
-            bias_gt = np.genfromtxt("../data/{}_bias.csv".format(dataset))
+        for k,indModel in enumerate(indList):
 
-            plt.figure(2*j,figsize=(10,5))
-            error = (np.abs(bias_gt-tensor[k,j])/np.abs(bias_gt))
-            plt.xlim(0,max(np.abs(xRangeDict[0]),np.abs(xRangeDict[1])))
-            plt.plot(np.abs(tensor[k,j]),error,"*",label=indModel)
-            if k==len(indList)-1:
-                plt.legend()
-                plt.savefig("../vis/{}/biasError_epoch{}.png".format(exp_id,epoch))
-                plt.close()
+            paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)),key=findNumbers)
 
-            plt.figure(2*j+1,figsize=(10,5))
-            plt.plot(bias_gt,tensor[k,j],"*",label=indModel)
-            x = np.arange(xRangeDict[0],xRangeDict[1],0.01)
-            plt.plot(x,x)
+            #Plot the param error as a function of the absolute value of the param
+            for j in range(len(tensor[k])):
 
-            plt.xlim(xRangeDict)
-            plt.ylim(xRangeDict)
+                epoch = findNumbers(os.path.basename(paramsPaths[j]).replace("model{}".format(indModel),""))
+                param_gt = np.genfromtxt("../data/{}_{}.csv".format(dataset,key))
 
-            if k==len(indList)-1:
-                plt.legend()
-                plt.savefig("../vis/{}/biasVSgt_epoch{}.png".format(exp_id,epoch))
-                plt.close()
+                plt.figure(2*j,figsize=(10,5))
+                #error = (np.abs(param_gt-tensor[k,j])/np.abs(param_gt))
+                #error = (param_gt-tensor[k,j])/np.abs(param_gt)
+                error = np.sqrt(np.power(param_gt-tensor[k,j],2)/len(param_gt))
+                if np.max(error) > maxErr:
+                    maxErr = np.max(error)
+
+                plt.xlim(xRangeDict)
+                plt.plot(tensor[k,j],error,"*",label=indModel,color=colors[k])
+
+                x = np.arange(xRangeDict[0],xRangeDict[1],0.01)
+                plt.plot(x,np.zeros_like(x))
+                if k==len(indList)-1:
+                    plt.ylim(0,maxErr)
+                    plt.legend()
+                    plt.savefig("../vis/{}/model{}_{}Error_epoch{}.png".format(exp_id,indList,key,epoch))
+                    plt.close()
+
+                plt.figure(2*j+1,figsize=(10,5))
+                plt.plot(param_gt,tensor[k,j],"*",label=indModel,color=colors[k])
+                x = np.arange(xRangeDict[0],xRangeDict[1],0.01)
+                plt.plot(x,x)
+
+                plt.xlim(xRangeDict)
+                plt.ylim(xRangeDict)
+
+                if k==len(indList)-1:
+                    plt.legend()
+                    plt.savefig("../vis/{}/model{}_{}VSgt_epoch{}_.png".format(exp_id,indList,key,epoch))
+                    plt.close()
 
 def scatterPlot(dataset,exp_id,indModel):
 
@@ -208,7 +221,6 @@ def scatterPlot(dataset,exp_id,indModel):
     colors = cm.rainbow(np.linspace(0, 1, len(trueScoresPathList)))
 
     for i,trueScoresPath in enumerate(trueScoresPathList):
-        print(trueScoresPath)
         trueScores = np.genfromtxt(trueScoresPath)
         epoch = findNumbers(os.path.basename(trueScoresPath).replace("model{}".format(indModel),""))
         plt.plot(trueScores[:,0],trueScores_gt,"*",label="epoch{}".format(epoch),color=colors[i])
@@ -625,7 +637,7 @@ def main(argv=None):
     argreader.parser.add_argument('--param_distr_plot',type=int,help='Like --distr_plot but only plot the parameters distribution and not the scores distributions.')
     argreader.parser.add_argument('--scatter_plot',type=int,help='To plot the real and predicted scores of a fake dataset in a 2D plot. \
                                     The first argument should be the model id')
-    argreader.parser.add_argument('--plot_bias',action='store_true',help='To plot the error of every bias parameters at each epoch for each model')
+    argreader.parser.add_argument('--plot_param',type=str,nargs="*",help='To plot the error of every parameters at each epoch for each model. The argument value is the name of the parameter to plot.')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -696,7 +708,7 @@ def main(argv=None):
     if args.scatter_plot:
         scatterPlot(args.dataset,args.exp_id,args.scatter_plot)
 
-    if args.plot_bias:
-        plotBias(args.dataset,args.exp_id)
+    if args.plot_param:
+        plotParam(args.dataset,args.exp_id,args.plot_param)
 if __name__ == "__main__":
     main()
