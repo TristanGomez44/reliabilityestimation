@@ -91,6 +91,7 @@ class ArgReader():
                             help='The threshold value under which the training stops')
         self.parser.add_argument('--epochs', type=int, metavar='N',
                             help='number of epochs to train')
+
         self.parser.add_argument('--lr', type=str2FloatList,metavar='LR',
                             help='learning rate (it can be a schedule : --lr 0.01,0.001,0.0001)')
         self.parser.add_argument('--num_workers', type=int,metavar='NUMWORKERS',
