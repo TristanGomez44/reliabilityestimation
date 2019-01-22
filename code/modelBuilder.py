@@ -184,12 +184,6 @@ class MLE(nn.Module):
             oriSize = tensor.size()
             tensor = tensor.view(-1)
 
-            #meanAbsVal = torch.abs(tensor).mean()
-            #gaussDis = Normal(torch.zeros(tensor.size(0)), 0.5*percNoise*meanAbsVal*torch.eye(tensor.size(0)))
-
-            #noise = torch.diag(gaussDis.sample())
-            #tensor += noise
-
             tensor = tensor.view(oriSize)
 
             if key == "incons" or key == "diffs":
@@ -209,14 +203,14 @@ class MLE(nn.Module):
                 setattr(self,key,nn.Parameter(initFunc(dataInt)))
 
     def init_trueScores(self,dataInt):
-        return dataInt.mean(dim=1)
+        return dataInt.float().mean(dim=1)
 
     def init_bias(self,dataInt):
-        return (dataInt-self.trueScores.unsqueeze(1).expand_as(dataInt)).mean(dim=0)
+        return (dataInt.float()-self.trueScores.unsqueeze(1).expand_as(dataInt)).mean(dim=0)
 
     def init_diffs(self,dataInt):
 
-        video_amb = torch.pow(self.trueScoresBiasMatrix()-dataInt,2).mean(dim=1)
+        video_amb = torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2).mean(dim=1)
         content_amb = torch.zeros(len(self.distorNbList),1)
         sumInd = 0
 
@@ -229,7 +223,13 @@ class MLE(nn.Module):
 
     def init_incons(self,dataInt):
 
-        return torch.sqrt(torch.pow(self.trueScoresBiasMatrix()-dataInt,2).mean(dim=0))
+        #print(torch.pow(self.trueScoresBiasMatrix()-dataInt,2)[:,-1])
+        #print(torch.pow(self.trueScoresBiasMatrix()-dataInt,2).mean(dim=0)[-1])
+
+        res = torch.sqrt(torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2).mean(dim=0))
+        res = torch.clamp(res,0.01,0.99)
+
+        return res
 
     def unifPrior(self,loss):
         return loss
