@@ -214,19 +214,25 @@ def train(model,optimConst,kwargs,trainSet, args):
         if (epoch-1) % ((args.epochs + 1)//len(args.lr)) == 0 or epoch==1:
 
             kwargs['lr'] = args.lr[lrCounter]
-            #print("Learning rate : ",kwargs['lr'])
-            if optimConst:
-                optimizer = optimConst((getattr(model,param) for param in args.param_to_opti), **kwargs)
-            else:
-                optimizer = None
+
             if lrCounter<len(args.lr)-1:
                 lrCounter += 1
 
-        #print(model.state_dict()["diffs"])
+            if args.train_mode == "joint":
+                if optimConst:
+                    optimizer = optimConst((getattr(model,param) for param in args.param_to_opti), **kwargs)
+                else:
+                    optimizer = None
+
+        if args.train_mode == "alternate":
+            if (epoch-1) % args.alt_epoch_nb == 0:
+
+                paramName = args.param_to_opti[((epoch-1)//args.alt_epoch_nb) % len(args.param_to_opti)]
+
+                optimizer = optimConst((getattr(model,paramName),), **kwargs)
+
         old_score = model.getFlatParam().clone()
         loss = one_epoch_train(model,optimizer,trainSet,epoch, args,args.lr[lrCounter])
-        #print(model.state_dict()["diffs"])
-        #sys.exit(0)
 
         dist = torch.sqrt(torch.pow(old_score-model.getFlatParam(),2).sum())
         epoch += 1
