@@ -135,8 +135,12 @@ class ArgReader():
         self.parser.add_argument('--model_values', type=str2FloatList, nargs='+',metavar='V',
                             help='The values the varying model parameter has to have during robustness evaluation')
 
-        self.parser.add_argument('--start_mode', type=str,metavar='P',
+        self.parser.add_argument('--start_mode', type=str,metavar='SM',
                     help='The mode to use to initialise the model. Can be \'init\' or \'fine_tune\'.')
+        self.parser.add_argument('--train_mode', type=str,metavar='TM',
+                    help='The mode to use to train the model. Can be \'joint\' or \'alternate\'.')
+        self.parser.add_argument('--alt_epoch_nb', type=int,metavar='TM',
+                    help='The number of epoch during which train each parameter. Ignored if using \'joint\' training mode.')
 
         self.parser.add_argument('--perc_noise', type=float,metavar='S',
                         help='For \'init_oracle\' initialisation mode, the norm of the gaussian noise added to params, relative to their norm.')
