@@ -137,6 +137,16 @@ class ArgReader():
 
         self.parser.add_argument('--start_mode', type=str,metavar='SM',
                     help='The mode to use to initialise the model. Can be \'init\' or \'fine_tune\'.')
+
+        self.parser.add_argument('--true_scores_init', type=str,metavar='SM',
+                    help='The function name to use to init the true scores when using aproximate init. Can only be \'base\'')
+        self.parser.add_argument('--bias_init', type=str,metavar='SM',
+                    help='The function name to use to init the biases when using aproximate init. Can only be \'base\'')
+        self.parser.add_argument('--diffs_init', type=str,metavar='SM',
+                    help='The function name to use to init the difficulties when using aproximate init. Can only be \'base\'')
+        self.parser.add_argument('--incons_init', type=str,metavar='SM',
+                    help='The function name to use to init the inconsistencies when using aproximate init. Can only be \'base\', \'use_diffs\'.')
+
         self.parser.add_argument('--train_mode', type=str,metavar='TM',
                     help='The mode to use to train the model. Can be \'joint\' or \'alternate\'.')
         self.parser.add_argument('--alt_epoch_nb', type=int,metavar='TM',
