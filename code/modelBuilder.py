@@ -168,7 +168,7 @@ class MLE(nn.Module):
 
         self.setParams(annot_bias,annot_incons,video_ambTensor,vid_score)
 
-    def init(self,dataInt,datasetName,paramNotGT):
+    def init(self,dataInt,datasetName,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init):
 
         self.init_base(dataInt)
         paramNameList = list(self.state_dict().keys())
@@ -191,42 +191,59 @@ class MLE(nn.Module):
 
             setattr(self,key,nn.Parameter(tensor))
 
+        functionNameDict = {'bias':bias_init,'trueScores':true_scores_init,'diffs':diffs_init,'incons':incons_init}
+
         for key in paramNotGT:
 
-            initFunc = getattr(self,"init_{}".format(key))
+            initFunc = getattr(self,functionNameDict[key])
 
+            tensor = initFunc(dataInt)
             if key=="diffs" or key=="incons":
-                tensor = initFunc(dataInt)
                 tensor = torch.log(tensor/(1-tensor))
-                setattr(self,key,nn.Parameter(tensor))
-            else:
-                setattr(self,key,nn.Parameter(initFunc(dataInt)))
 
-    def init_trueScores(self,dataInt):
+            setattr(self,key,nn.Parameter(tensor))
+
+    def tsInitBase(self,dataInt):
         return dataInt.float().mean(dim=1)
 
-    def init_bias(self,dataInt):
+    def bInitBase(self,dataInt):
         return (dataInt.float()-self.trueScores.unsqueeze(1).expand_as(dataInt)).mean(dim=0)
 
-    def init_diffs(self,dataInt):
+    def dInitBase(self,dataInt):
 
+        #video_amb = torch.sqrt(torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2).mean(dim=1))
         video_amb = torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2).mean(dim=1)
+
         content_amb = torch.zeros(len(self.distorNbList),1)
         sumInd = 0
 
         for i in range(len(self.distorNbList)):
 
-            content_amb[i] = video_amb[sumInd:sumInd+self.distorNbList[i]].mean()
+            content_amb[i] = torch.sqrt(video_amb[sumInd:sumInd+self.distorNbList[i]].mean())
             sumInd += self.distorNbList[i]
 
         return content_amb
 
-    def init_incons(self,dataInt):
+    def dInitWithIncons(self,dataInt):
 
-        #print(torch.pow(self.trueScoresBiasMatrix()-dataInt,2)[:,-1])
-        #print(torch.pow(self.trueScoresBiasMatrix()-dataInt,2).mean(dim=0)[-1])
+        exp_incons = torch.pow(self.incons.unsqueeze(0).expand(dataInt.size(0),self.incons.size(0)),2)
 
-        res = torch.sqrt(torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2).mean(dim=0))
+        video_amb = (torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2)-exp_incons).mean(dim=1)
+        content_amb = torch.zeros(len(self.distorNbList),1)
+        sumInd = 0
+
+        print(video_amb)
+        for i in range(len(self.distorNbList)):
+
+            content_amb[i] = torch.sqrt(video_amb[sumInd:sumInd+self.distorNbList[i]].mean())
+            sumInd += self.distorNbList[i]
+
+
+        return content_amb
+
+    def iInitBase(self,dataInt):
+
+        res = torch.sqrt((torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2)).mean(dim=0))
         res = torch.clamp(res,0.01,0.99)
 
         return res
@@ -236,10 +253,8 @@ class MLE(nn.Module):
 
     def oraclePrior(self,loss):
         for param in self.disDict.keys():
-
             loss -= self.disDict[param].log_prob(getattr(self,param)).sum()
 
-            #print(param,getattr(self,param),self.disDict[param].log_prob(getattr(self,param)))
         return loss
 
     def setPrior(self,priorName,dataset):
@@ -276,7 +291,6 @@ class MLE(nn.Module):
         x = xInt.float()
 
         #Matrix containing the sum of all (video_amb,annot_incons) possible pairs
-        #amb = self.diffs.unsqueeze(1).expand(self.contentNb, self.distorNb).contiguous().view(-1)
         tmp = []
         for i in range(self.contentNb):
             tmp.append(self.diffs[i].expand(self.distorNbList[i]))
