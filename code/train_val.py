@@ -203,11 +203,19 @@ def train(model,optimConst,kwargs,trainSet, args):
     epoch = 1
     dist = args.stop_crit+1
     lrCounter = 0
+
+    distArray = np.zeros((args.epochs))
+
+    distDict = {"bias":distArray.copy(),"trueScores":distArray.copy(),\
+                "incons":distArray.copy(),"diffs":distArray.copy(),"all":distArray.copy()}
+    oldParam = {"bias":None,"trueScores":None,\
+                "incons":None,"diffs":None}
+
     while epoch < args.epochs and dist > args.stop_crit:
 
         if epoch%args.log_interval==0:
 
-            print("\tEpoch : ",epoch,"dist",float(dist))
+            print("\tEpoch : ",epoch,"dist",distDict["all"][epoch-1].item())
 
         #This condition determines when the learning rate should be updated (to follow the learning rate schedule)
         #The optimiser have to be rebuilt every time the learning rate is updated
@@ -231,17 +239,35 @@ def train(model,optimConst,kwargs,trainSet, args):
 
                 optimizer = optimConst((getattr(model,paramName),), **kwargs)
 
-        old_score = model.getFlatParam().clone()
+        for key in oldParam.keys():
+            oldParam[key] = getattr(model,key).clone()
+
         loss = one_epoch_train(model,optimizer,trainSet,epoch, args,args.lr[lrCounter])
 
-        dist = torch.sqrt(torch.pow(old_score-model.getFlatParam(),2).sum())
+        #Computing distance for all parameters
+        for key in oldParam.keys():
+            distDict[key][epoch-1] = torch.pow(oldParam[key]-getattr(model,key),2).sum()
+            distDict["all"][epoch-1] += distDict[key][epoch-1]
+        for key in  oldParam.keys():
+            distDict[key][epoch-1] = np.sqrt(distDict[key][epoch-1])
+        distDict["all"][epoch-1] = np.sqrt(distDict["all"][epoch-1])
+
         epoch += 1
 
         if epoch%args.log_interval==0:
             paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max)
             torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
 
-    print("\tStopped at epoch ",epoch,"dist",dist.item())
+    #Writing the array in a csv file
+    if epoch<args.epochs:
+        for key in distDict.keys():
+            distDict[key] = distDict[key][distDict[key] > 0]
+
+    fullDistArray = np.concatenate([distDict[key][:,np.newaxis] for key in  distDict.keys()],axis=1)
+
+    np.savetxt("../results/{}/model{}_dist.csv".format(args.exp_id,args.ind_id),fullDistArray,header="".join([key+"," for key in distDict.keys()]),delimiter=",",comments='')
+
+    print("\tStopped at epoch ",epoch,"dist",distDict["all"][epoch-1].item())
     return loss,epoch
 
 def main(argv=None):
@@ -292,7 +318,9 @@ def main(argv=None):
 
     #Inititialise the model
     if args.start_mode == "init":
-        model.init(trainSet,args.dataset,args.param_not_gt)
+        model.init(trainSet,args.dataset,args.param_not_gt,\
+                    args.true_scores_init,args.bias_init,args.diffs_init,args.incons_init)
+
     elif args.start_mode == "fine_tune":
         init_path = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,args.init_path)),key=processResults.findNumbers)[-1]
         model.load_state_dict(torch.load(init_path))
