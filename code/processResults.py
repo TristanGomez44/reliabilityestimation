@@ -26,6 +26,60 @@ from torch.distributions.uniform import Uniform
 from torch.distributions.normal import Normal
 from matplotlib.lines import Line2D
 import math
+
+from sklearn.manifold import TSNE
+
+paramKeys = ["bias","incons","diffs","trueScores"]
+
+def t_sne(exp_id,model_id,start_epoch):
+
+    def getEpoch(path):
+        return findNumbers(os.path.basename(path).replace("model{}".format(model_id),""))
+
+    for key in paramKeys:
+        paramFiles = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,model_id,key)),key=findNumbers)
+        paramFiles = list(filter(lambda x:getEpoch(x)>start_epoch,paramFiles))
+
+        colors = cm.plasma(np.linspace(0, 1,len(paramFiles)))
+
+        params = list(map(lambda x:np.genfromtxt(x)[:,0],paramFiles))
+
+        repre_emb = TSNE(n_components=2,init='pca',random_state=1,learning_rate=20).fit_transform(params)
+
+        plt.figure()
+        plt.scatter(repre_emb[:,0],repre_emb[:,1],color=colors)
+
+        plt.savefig("../vis/{}/model{}_{}_tsne.png".format(exp_id,model_id,key))
+
+def plotDist(exp_id,ind_list):
+
+    colors = cm.rainbow(np.linspace(0, 1, len(paramKeys)+1))
+
+    markers = [m for m, func in Line2D.markers.items() if func != 'nothing' and m not in Line2D.filled_markers]
+    if len(markers) < len(ind_list):
+        raise ValueError("Too many model to plot : {}. {} is the maximum".format(nbPlot,len(markers)))
+    else:
+        markers = markers[:len(ind_list)]
+
+    fig = plt.figure(figsize=(60,5))
+    ax = fig.add_subplot(111)
+    ax.set_yscale('log')
+
+    for i,ind in enumerate(ind_list):
+        distArray = np.genfromtxt("../results/{}/model{}_dist.csv".format(exp_id,ind),delimiter=",",dtype=str)
+        header = distArray[0]
+        distArray = distArray[1:].astype(float)
+
+        for j,key in enumerate(header):
+            if key != "all":
+                plt.plot(distArray[:,j],label="model{} {}".format(ind,key),color=colors[j],marker=markers[i],alpha=0.5)
+
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+    fig.legend(loc='right')
+
+    plt.savefig("../vis/{}/dist_{}.png".format(exp_id,ind_list))
+
 def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
 
     modelConf = configparser.ConfigParser()
@@ -41,7 +95,6 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
     paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)))
     print(paramsPaths)
 
-    paramKeys = ["bias","incons","diffs","trueScores"]
     tensorDict = {"bias":np.zeros((len(paramsPaths),getattr(model,"bias").size(0))),\
                   "incons":np.zeros((len(paramsPaths),getattr(model,"incons").size(0))),\
                   "diffs":np.zeros((len(paramsPaths),getattr(model,"diffs").size(0))),\
@@ -142,14 +195,10 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
 
 def plotParam(dataset,exp_id,indList):
 
-    keys = ["bias","incons","diffs","trueScores"]
-
-    #indList = list(map(lambda x:os.path.basename(x).replace("model","").replace(".ini",""),sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)))
-
     paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indList[0])))
     colors = cm.rainbow(np.linspace(0, 1,len(indList)))
 
-    for key in keys:
+    for key in paramKeys:
 
         tensor = np.zeros((len(indList),len(paramsPaths),len(np.genfromtxt("../results/{}/model{}_epoch0_{}.csv".format(exp_id,indList[0],key)))))
 
@@ -637,7 +686,11 @@ def main(argv=None):
     argreader.parser.add_argument('--param_distr_plot',type=int,help='Like --distr_plot but only plot the parameters distribution and not the scores distributions.')
     argreader.parser.add_argument('--scatter_plot',type=int,help='To plot the real and predicted scores of a fake dataset in a 2D plot. \
                                     The first argument should be the model id')
-    argreader.parser.add_argument('--plot_param',type=str,nargs="*",help='To plot the error of every parameters at each epoch for each model. The argument value is the name of the parameter to plot.')
+    argreader.parser.add_argument('--plot_param',type=str,nargs="*",help='To plot the error of every parameters at each epoch for each model. The argument values are the index of the models to plot.')
+    argreader.parser.add_argument('--plot_dist',type=int,nargs="*",help='To plot the distance travelled by each parameters. The argument values are the index of the models to plot.')
+
+    argreader.parser.add_argument('--t_sne',type=int,nargs=2,help='To plot the t-sne visualisation of the values taken by the parameters during training. \
+                                    The first argument value is the id of the model to plot and the second is the start epoch.')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -710,5 +763,12 @@ def main(argv=None):
 
     if args.plot_param:
         plotParam(args.dataset,args.exp_id,args.plot_param)
+
+    if args.plot_dist:
+        plotDist(args.exp_id,args.plot_dist)
+
+    if args.t_sne:
+        t_sne(args.exp_id,args.t_sne[0],args.t_sne[1])
+
 if __name__ == "__main__":
     main()
