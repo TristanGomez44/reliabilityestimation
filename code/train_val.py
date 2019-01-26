@@ -198,9 +198,9 @@ def get_OptimConstructor(optimStr,momentum):
 
     return optimConst,kwargs
 
-def train(model,optimConst,kwargs,trainSet, args):
-
-    epoch = 1
+def train(model,optimConst,kwargs,trainSet, args,startEpoch):
+    print(startEpoch)
+    epoch = startEpoch
     dist = args.stop_crit+1
     lrCounter = 0
 
@@ -215,11 +215,11 @@ def train(model,optimConst,kwargs,trainSet, args):
 
         if epoch%args.log_interval==0:
 
-            print("\tEpoch : ",epoch,"dist",distDict["all"][epoch-1].item())
+            print("\tEpoch : ",epoch,"dist",distDict["all"][epoch-2].item())
 
         #This condition determines when the learning rate should be updated (to follow the learning rate schedule)
         #The optimiser have to be rebuilt every time the learning rate is updated
-        if (epoch-1) % ((args.epochs + 1)//len(args.lr)) == 0 or epoch==1:
+        if (epoch-1) % ((args.epochs + 1)//len(args.lr)) == 0 or epoch==startEpoch:
 
             kwargs['lr'] = args.lr[lrCounter]
 
@@ -244,13 +244,15 @@ def train(model,optimConst,kwargs,trainSet, args):
 
         loss = one_epoch_train(model,optimizer,trainSet,epoch, args,args.lr[lrCounter])
 
-        #Computing distance for all parameters
-        for key in oldParam.keys():
-            distDict[key][epoch-1] = torch.pow(oldParam[key]-getattr(model,key),2).sum()
-            distDict["all"][epoch-1] += distDict[key][epoch-1]
-        for key in  oldParam.keys():
-            distDict[key][epoch-1] = np.sqrt(distDict[key][epoch-1])
-        distDict["all"][epoch-1] = np.sqrt(distDict["all"][epoch-1])
+        if args.comp_dist:
+            #Computing distance for all parameters
+            for key in oldParam.keys():
+                distDict[key][epoch-1] = torch.pow(oldParam[key]-getattr(model,key),2).sum()
+                distDict["all"][epoch-1] += distDict[key][epoch-1]
+            for key in  oldParam.keys():
+                distDict[key][epoch-1] = np.sqrt(distDict[key][epoch-1])
+            distDict["all"][epoch-1] = np.sqrt(distDict["all"][epoch-1])
+            dist = distDict["all"][epoch-1]
 
         epoch += 1
 
@@ -258,16 +260,21 @@ def train(model,optimConst,kwargs,trainSet, args):
             paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max)
             torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
 
-    #Writing the array in a csv file
-    if epoch<args.epochs:
-        for key in distDict.keys():
-            distDict[key] = distDict[key][distDict[key] > 0]
+    if args.comp_dist:
+        #Writing the array in a csv file
+        if epoch<args.epochs:
+            for key in distDict.keys():
+                distDict[key] = distDict[key][distDict[key] > 0]
 
-    fullDistArray = np.concatenate([distDict[key][:,np.newaxis] for key in  distDict.keys()],axis=1)
+        fullDistArray = np.concatenate([distDict[key][:,np.newaxis] for key in  distDict.keys()],axis=1)
 
-    np.savetxt("../results/{}/model{}_dist.csv".format(args.exp_id,args.ind_id),fullDistArray,header="".join([key+"," for key in distDict.keys()]),delimiter=",",comments='')
+        header = ''
+        for i,key in enumerate(distDict.keys()):
+            header += key+"," if i<len(distDict.keys())-1 else key
 
-    print("\tStopped at epoch ",epoch,"dist",distDict["all"][epoch-1].item())
+        np.savetxt("../results/{}/model{}_dist.csv".format(args.exp_id,args.ind_id),fullDistArray,header=header,delimiter=",",comments='')
+
+    print("\tStopped at epoch ",epoch,"dist",distDict["all"][epoch-2].item())
     return loss,epoch
 
 def main(argv=None):
@@ -279,8 +286,10 @@ def main(argv=None):
     argreader.parser.add_argument('--only_init',action='store_true',help='To initialise a model without training it.\
                                                                         This still computes the confidence intervals')
 
-    argreader.parser.add_argument('--init_path',type=str,metavar="N",help='The index of the model to use as initialisation. \
+    argreader.parser.add_argument('--init_id',type=str,metavar="N",help='The index of the model to use as initialisation. \
                                                                             The weight of the last epoch will be used.')
+
+    argreader.parser.add_argument('--comp_dist',action='store_true',help='To compute the distance travelled by each parameters between each epochs.')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -321,9 +330,12 @@ def main(argv=None):
         model.init(trainSet,args.dataset,args.param_not_gt,\
                     args.true_scores_init,args.bias_init,args.diffs_init,args.incons_init)
 
+        startEpoch=1
     elif args.start_mode == "fine_tune":
-        init_path = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,args.init_path)),key=processResults.findNumbers)[-1]
+        init_path = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,args.init_id)),key=processResults.findNumbers)[-1]
         model.load_state_dict(torch.load(init_path))
+        startEpoch = processResults.findNumbers(os.path.basename(init_path).replace("model{}".format(args.init_id),""))
+
     else:
         raise ValueError("Unknown init method : {}".format(args.start_mode))
 
@@ -345,10 +357,7 @@ def main(argv=None):
 
         model.setPrior(args.prior,args.dataset)
 
-        #print(model.bias,torch.sigmoid(model.incons),torch.sigmoid(model.diffs),model.trueScores)
-        loss,epoch = train(model,optimConst,kwargs,trainSet, args)
-        #print(model.bias,torch.sigmoid(model.incons),torch.sigmoid(model.diffs),model.trueScores)
-
+        loss,epoch = train(model,optimConst,kwargs,trainSet, args,startEpoch=startEpoch)
         torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
         paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max)
 
