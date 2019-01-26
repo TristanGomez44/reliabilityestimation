@@ -43,11 +43,17 @@ def t_sne(exp_id,model_id,start_epoch):
         colors = cm.plasma(np.linspace(0, 1,len(paramFiles)))
 
         params = list(map(lambda x:np.genfromtxt(x)[:,0],paramFiles))
+        alphas = np.power(np.arange(len(params))/len(params),4)
 
         repre_emb = TSNE(n_components=2,init='pca',random_state=1,learning_rate=20).fit_transform(params)
 
         plt.figure()
-        plt.scatter(repre_emb[:,0],repre_emb[:,1],color=colors)
+
+        for i,point in enumerate(repre_emb):
+            if i<len(repre_emb)-1:
+                plt.arrow(repre_emb[i,0],repre_emb[i,1],repre_emb[i+1,0]-repre_emb[i,0],repre_emb[i+1,1]-repre_emb[i,1],alpha=alphas[i], zorder=1)
+
+        plt.scatter(repre_emb[:,0],repre_emb[:,1],color=colors, zorder=2)
 
         plt.savefig("../vis/{}/model{}_{}_tsne.png".format(exp_id,model_id,key))
 
