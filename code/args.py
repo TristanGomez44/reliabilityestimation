@@ -103,7 +103,8 @@ class ArgReader():
         self.parser.add_argument('--seed', type=int, metavar='S',
                             help='random seed')
         self.parser.add_argument('--log_interval', type=int, metavar='N',
-                            help='how many batches to wait before logging training status')
+                            help='how many epochs to train before logging training status')
+
         self.parser.add_argument('--ind_id', type=int, metavar='IND_ID',
                             help='the id of the individual')
         self.parser.add_argument('--exp_id', type=str, metavar='EXP_ID',
