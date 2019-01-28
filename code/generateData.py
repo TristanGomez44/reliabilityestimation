@@ -45,10 +45,11 @@ def main(argv=None):
     #Getting the args from command line and config file
     args = argreader.args
 
-    #Write the arguments in a config file so the experiment can be re-run
-    argreader.writeConfigFile("../data/{}{}.ini".format(args.init_from,args.dataset_id))
 
     if not args.init_from:
+
+        #Write the arguments in a config file so the experiment can be re-run
+        argreader.writeConfigFile("../data/artifData{}.ini".format(args.dataset_id))
 
         torch.manual_seed(args.seed)
         random.seed(args.seed)
@@ -146,11 +147,15 @@ def main(argv=None):
         np.savetxt("../data/artifData{}_bias.csv".format(args.dataset_id),bias[:,0,0].numpy(),delimiter="\t")
     else:
 
+        #Write the arguments in a config file so the experiment can be re-run
+        argreader.writeConfigFile("../data/{}{}.ini".format(args.init_from,args.dataset_id))
+
         #The number of contents of the old dataset:
         old_scores = np.genfromtxt("../data/{}_scores.csv".format(args.init_from),delimiter="\t",dtype=str)
         videoRef = old_scores[1:,0]
         nb_content_old = len(np.unique(videoRef))
         nb_annot_old = old_scores.shape[1]-2
+
 
         #Checking if the number of video per reference if constant
         vidDict = {}
@@ -183,16 +188,18 @@ def main(argv=None):
             np.savetxt("../data/{}{}_incons.csv".format(args.init_from,args.dataset_id),incons,delimiter="\t")
             np.savetxt("../data/{}{}_diffs.csv".format(args.init_from,args.dataset_id),diffs,delimiter="\t")
 
-        scores = np.genfromtxt("../data/{}_scores.csv".format(args.init_from),delimiter="\t",dtype=str)[:,:args.nb_annot]
+        scores = np.genfromtxt("../data/{}_scores.csv".format(args.init_from),delimiter="\t",dtype=str)
         if constantVideoPerRef:
-            scores = scores[1:].reshape(nb_content_old,nb_video_per_content_old,nb_annot_old)
+            scores = scores[1:].reshape(nb_content_old,nb_video_per_content_old,nb_annot_old+2)
             scores = scores[:args.nb_content,:args.nb_video_per_content,:args.nb_annot+2]
             scores = scores.reshape(scores.shape[0]*scores.shape[1],scores.shape[2])
         else:
             scores = scores[:,:args.nb_annot+2]
 
-        np.savetxt("../data/{}{}_scores.csv".format(args.init_from,args.dataset_id),scores.astype(str),delimiter="\t",fmt='%s')
+        header = "videos\tencode"+"".join(["\t{}".format(i) for i in range(args.nb_annot)])+"\n"
+        np.savetxt("../data/{}{}_scores.csv".format(args.init_from,args.dataset_id),scores.astype(str),delimiter="\t",fmt='%s',header=header,comments='')
 
+    print("Finished generating artifData{}".format(args.dataset_id))
 def meanvar_to_alphabeta(mean,var):
 
     #print(torch.pow(mean,2))
