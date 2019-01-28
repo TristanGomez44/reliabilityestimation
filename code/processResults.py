@@ -31,6 +31,17 @@ from sklearn.manifold import TSNE
 
 paramKeys = ["bias","incons","diffs","trueScores"]
 
+def baseLineError(datasetName,refDict):
+
+    dataset,_ = load_data.loadData(datasetName)
+    baseDict,_ = computeBaselines(dataset)
+
+    errDict = {}
+    for key in refDict.keys():
+        errDict[key] = np.sqrt(np.power(baseDict[key]-refDict[key],2).sum()/len(refDict[key]))
+
+    return errDict
+
 def convSpeed(exp_id,refModelId):
 
     modelConfigPaths = sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)
@@ -39,14 +50,21 @@ def convSpeed(exp_id,refModelId):
     modelConfigsPath,modelIds = zip(*list(filter(lambda x:x[1] != refModelId,zip(modelConfigPaths,modelIds))))
 
     refTrueScoresPath = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,refModelId)),key=findNumbers)[-1]
-
     refTrueScores = np.genfromtxt(refTrueScoresPath,delimiter="\t")[:,0]
+    modelConf = configparser.ConfigParser()
+    modelConf.read("../models/{}/model{}.ini".format(exp_id,refModelId))
+    datasetName = modelConf['default']["dataset"]
+    dataset,_ = load_data.loadData(datasetName)
+    refDict,_ = computeBaselines(dataset)
 
     errorArray = np.zeros(len(modelConfigsPath))
     nbAnnotArray = np.zeros(len(modelConfigsPath))
+    #Store the error of each baseline method
+    errorArrayDict = {}
+    for key in refDict:
+        errorArrayDict[key] = np.zeros(len(modelConfigsPath))
 
     for i,modelPath in enumerate(modelConfigsPath):
-
         modelConf = configparser.ConfigParser()
         modelConf.read(modelPath)
         datasetName = modelConf['default']["dataset"]
@@ -61,10 +79,17 @@ def convSpeed(exp_id,refModelId):
 
         errorArray[i] = np.sqrt(np.power(trueScores-refTrueScores,2).sum()/len(refTrueScores))
 
+        errDict = baseLineError(datasetName,refDict)
+        for key in errorArrayDict:
+            errorArrayDict[key][i] = errDict[key]
+
     plt.figure()
     plt.xlabel("Nb of annotators")
     plt.ylabel("RMSE")
     plt.scatter(nbAnnotArray,errorArray)
+    for key in errorArrayDict:
+        plt.scatter(nbAnnotArray,errorArrayDict[key],label=key)
+    plt.legend()
     plt.savefig("../vis/{}/convSpeed.png".format(exp_id))
 
 def distHeatMap(exp_id,params,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=100):
@@ -105,7 +130,7 @@ def distHeatMap(exp_id,params,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=100):
                 neg_log_dist = -np.log10(distFile[-nbEpochsMean:,j].mean())
                 color = colors[int(nbStep*neg_log_dist/maxLog)]
 
-                plt.scatter(nb_annot,nb_video_per_content*nb_content,color=color,s=10)
+                plt.scatter(nb_annot,nb_video_per_content*nb_content,color=color,s=100)
 
                 if i==len(configFiles)-1:
                     plt.savefig("../vis/{}/distHeatMap_{}.png".format(exp_id,header[j]))
@@ -485,7 +510,10 @@ def computeBaselines(trainSet):
     sr_mos_mean,sr_mos_std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=False)
     zs_sr_mos_mean,zs_sr_mos_std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=True)
 
-    return mos_mean,sr_mos_mean,zs_sr_mos_mean,mos_std,sr_mos_std,zs_sr_mos_std
+    meanDict = {"mos":mos_mean,"sr_mos":sr_mos_mean,"zs_sr_mos":zs_sr_mos_mean}
+    stdDict = {"mos":mos_std,"sr_mos":sr_mos_std,"zs_sr_mos":zs_sr_mos_std}
+
+    return meanDict,stdDict
 
 def mean_std(model,loss):
     mle_mean = model.video_scor
