@@ -22,6 +22,9 @@ import glob
 
 from torch.distributions.beta import Beta
 
+
+
+
 def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
 
     confInterList = processResults.computeConfInter(loss,model)
@@ -199,7 +202,7 @@ def get_OptimConstructor(optimStr,momentum):
     return optimConst,kwargs
 
 def train(model,optimConst,kwargs,trainSet, args,startEpoch):
-    print(startEpoch)
+
     epoch = startEpoch
     dist = args.stop_crit+1
     lrCounter = 0
@@ -264,7 +267,7 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
         #Writing the array in a csv file
         if epoch<args.epochs:
             for key in distDict.keys():
-                distDict[key] = distDict[key][distDict[key] > 0]
+                distDict[key] = distDict[key][:epoch]
 
         fullDistArray = np.concatenate([distDict[key][:,np.newaxis] for key in  distDict.keys()],axis=1)
 
