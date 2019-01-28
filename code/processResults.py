@@ -31,6 +31,42 @@ from sklearn.manifold import TSNE
 
 paramKeys = ["bias","incons","diffs","trueScores"]
 
+def convSpeed(exp_id,refModelId):
+
+    modelConfigPaths = sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)
+    modelIds = list(map(lambda x:findNumbers(os.path.basename(x)),modelConfigPaths))
+
+    modelConfigsPath,modelIds = zip(*list(filter(lambda x:x[1] != refModelId,zip(modelConfigPaths,modelIds))))
+
+    refTrueScoresPath = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,refModelId)),key=findNumbers)[-1]
+
+    refTrueScores = np.genfromtxt(refTrueScoresPath,delimiter="\t")[:,0]
+
+    errorArray = np.zeros(len(modelConfigsPath))
+    nbAnnotArray = np.zeros(len(modelConfigsPath))
+
+    for i,modelPath in enumerate(modelConfigsPath):
+
+        modelConf = configparser.ConfigParser()
+        modelConf.read(modelPath)
+        datasetName = modelConf['default']["dataset"]
+        modelId = modelConf['default']["ind_id"]
+
+        dataConf = configparser.ConfigParser()
+        dataConf.read("../data/{}.ini".format(datasetName))
+        nbAnnotArray[i] = dataConf['default']["nb_annot"]
+
+        trueScoresPath = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,modelId)),key=findNumbers)[-1]
+        trueScores = np.genfromtxt(trueScoresPath,delimiter="\t")[:,0]
+
+        errorArray[i] = np.sqrt(np.power(trueScores-refTrueScores,2).sum()/len(refTrueScores))
+
+    plt.figure()
+    plt.xlabel("Nb of annotators")
+    plt.ylabel("RMSE")
+    plt.scatter(nbAnnotArray,errorArray)
+    plt.savefig("../vis/{}/convSpeed.png".format(exp_id))
+
 def distHeatMap(exp_id,params,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=100):
 
     configFiles = sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)
@@ -67,10 +103,9 @@ def distHeatMap(exp_id,params,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=100):
                 plt.ylabel("Number of videos")
 
                 neg_log_dist = -np.log10(distFile[-nbEpochsMean:,j].mean())
-                print(findNumbers(os.path.basename(configFile)),nb_video_per_content*nb_content)
                 color = colors[int(nbStep*neg_log_dist/maxLog)]
 
-                plt.scatter(nb_annot,nb_video_per_content*nb_content,color=color)
+                plt.scatter(nb_annot,nb_video_per_content*nb_content,color=color,s=10)
 
                 if i==len(configFiles)-1:
                     plt.savefig("../vis/{}/distHeatMap_{}.png".format(exp_id,header[j]))
@@ -742,8 +777,11 @@ def main(argv=None):
 
     argreader.parser.add_argument('--t_sne',type=int,nargs=2,help='To plot the t-sne visualisation of the values taken by the parameters during training. \
                                     The first argument value is the id of the model to plot and the second is the start epoch.')
+
     argreader.parser.add_argument('--dist_heatmap',type=str,nargs="*",help='To plot the average distance travelled by parameters at the end of training for each model. The value of this argument is a list\
                                     of parameters to plot.')
+
+    argreader.parser.add_argument('--conv_speed',type=int,metavar='ID',help='To plot the error as a function of the number of annotator. The value of the argument is the id of the reference model.')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -825,5 +863,9 @@ def main(argv=None):
 
     if args.dist_heatmap:
         distHeatMap(args.exp_id,args.dist_heatmap)
+
+    if args.conv_speed:
+        convSpeed(args.exp_id,args.conv_speed)
+
 if __name__ == "__main__":
     main()
