@@ -31,6 +31,51 @@ from sklearn.manifold import TSNE
 
 paramKeys = ["bias","incons","diffs","trueScores"]
 
+def distHeatMap(exp_id,params,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=100):
+
+    configFiles = sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)
+
+    colors = cm.plasma(np.linspace(0, 1,nbStep))
+
+
+    for i,configFile in enumerate(configFiles):
+
+        modelConf = configparser.ConfigParser()
+        modelConf.read(configFile)
+        modelConf = modelConf['default']
+
+        datasetName = modelConf["dataset"]
+
+        dataConf = configparser.ConfigParser()
+        dataConf.read("../data/{}.ini".format(datasetName))
+        dataConf = dataConf['default']
+
+        nb_annot = int(dataConf["nb_annot"])
+        nb_video_per_content = int(dataConf["nb_video_per_content"])
+        nb_content = int(dataConf["nb_content"])
+
+        distFilePath = "../results/{}/model{}_dist.csv".format(exp_id,findNumbers(os.path.basename(configFile)))
+        distFile = np.genfromtxt(distFilePath,delimiter=",",dtype=str)
+        header = distFile[0]
+        distFile = distFile[1:].astype(float) + 1e-9
+
+        for j in range(distFile.shape[1]):
+
+            if header[j] in params:
+                plt.figure(j)
+                plt.xlabel("Number of annotators")
+                plt.ylabel("Number of videos")
+
+                neg_log_dist = -np.log10(distFile[-nbEpochsMean:,j].mean())
+                print(findNumbers(os.path.basename(configFile)),nb_video_per_content*nb_content)
+                color = colors[int(nbStep*neg_log_dist/maxLog)]
+
+                plt.scatter(nb_annot,nb_video_per_content*nb_content,color=color)
+
+                if i==len(configFiles)-1:
+                    plt.savefig("../vis/{}/distHeatMap_{}.png".format(exp_id,header[j]))
+                    plt.close()
+
 def t_sne(exp_id,model_id,start_epoch):
 
     def getEpoch(path):
@@ -697,6 +742,8 @@ def main(argv=None):
 
     argreader.parser.add_argument('--t_sne',type=int,nargs=2,help='To plot the t-sne visualisation of the values taken by the parameters during training. \
                                     The first argument value is the id of the model to plot and the second is the start epoch.')
+    argreader.parser.add_argument('--dist_heatmap',type=str,nargs="*",help='To plot the average distance travelled by parameters at the end of training for each model. The value of this argument is a list\
+                                    of parameters to plot.')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -776,5 +823,7 @@ def main(argv=None):
     if args.t_sne:
         t_sne(args.exp_id,args.t_sne[0],args.t_sne[1])
 
+    if args.dist_heatmap:
+        distHeatMap(args.exp_id,args.dist_heatmap)
 if __name__ == "__main__":
     main()
