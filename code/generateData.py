@@ -16,6 +16,7 @@ import sys
 
 from matplotlib.lines import Line2D
 import matplotlib.cm as cm
+import os
 def main(argv=None):
 
 
@@ -33,7 +34,7 @@ def main(argv=None):
     argreader.parser.add_argument('--nb_video_per_content', metavar='STD',type=int,default=8,help='The number of videos per content')
     argreader.parser.add_argument('--nb_content', metavar='STD',type=int,default=25,help='The number of content')
 
-    argreader.parser.add_argument('--dataset_id', metavar='STD',type=int,default=0,help='The dataset id')
+    argreader.parser.add_argument('--dataset_id', metavar='STD',type=str,default=0,help='The dataset name')
     argreader.parser.add_argument('--continuous',action='store_true',help='To generate continuous scores instead of discrete ones')
 
     argreader.parser.add_argument('--init_from',metavar='DATASETNAME',type=str,help='A new dataset can be created by just removing parameters of an older one.\
@@ -45,17 +46,16 @@ def main(argv=None):
     #Getting the args from command line and config file
     args = argreader.args
 
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    if args.cuda:
+        torch.cuda.manual_seed(args.seed)
 
     if not args.init_from:
 
         #Write the arguments in a config file so the experiment can be re-run
-        argreader.writeConfigFile("../data/artifData{}.ini".format(args.dataset_id))
-
-        torch.manual_seed(args.seed)
-        random.seed(args.seed)
-        np.random.seed(args.seed)
-        if args.cuda:
-            torch.cuda.manual_seed(args.seed)
+        argreader.writeConfigFile("../data/{}.ini".format(args.dataset_id))
 
         trueScoreDis = Uniform(args.score_min,args.score_max)
         diffDis = Beta(args.diff_alpha, args.diff_beta)
@@ -116,8 +116,12 @@ def main(argv=None):
                         probs[k-1] = torch.exp(scoresDis.log_prob(value))
 
                     discDis = Multinomial(probs=probs)
+                    score = (discDis.sample().max(0)[1]+1).float()
 
-                    scores[i,j] = betaNormalize((discDis.sample().max(0)[1]+1).float(),args.score_min,args.score_max)
+                    if args.score_dis == "Beta":
+                        scores[i,j] = betaNormalize(score,args.score_min,args.score_max)
+                    else:
+                        scores[i,j] = score
                 else:
                     scores[i,j] = scoresDis.sample()
 
@@ -130,7 +134,7 @@ def main(argv=None):
 
                 scores[i,j] = postProcessingFunc(scores[i,j])
 
-        plt.savefig("../vis/artifData{}_scoreDis.png".format(args.dataset_id))
+        plt.savefig("../vis/{}_scoreDis.png".format(args.dataset_id))
 
         #scores = scores.int()
         csv = "videos\tencode"+"".join(["\t{}".format(i) for i in range(args.nb_annot)])+"\n"
@@ -138,24 +142,27 @@ def main(argv=None):
         for i in range(0,nb_videos):
             csv += str(i//args.nb_video_per_content+1)+"\tvid{}".format(i)+"".join("\t{}".format(scores[i,j]) for j in range(args.nb_annot))+"\n"
 
-        with open("../data/artifData{}_scores.csv".format(args.dataset_id),"w") as text_file:
+        with open("../data/{}_scores.csv".format(args.dataset_id),"w") as text_file:
             print(csv,file=text_file)
 
-        np.savetxt("../data/artifData{}_trueScores.csv".format(args.dataset_id),trueScores.numpy(),delimiter="\t")
-        np.savetxt("../data/artifData{}_diffs.csv".format(args.dataset_id),diffs.numpy(),delimiter="\t")
-        np.savetxt("../data/artifData{}_incons.csv".format(args.dataset_id),incons.numpy(),delimiter="\t")
-        np.savetxt("../data/artifData{}_bias.csv".format(args.dataset_id),bias[:,0,0].numpy(),delimiter="\t")
+        np.savetxt("../data/{}_trueScores.csv".format(args.dataset_id),trueScores.numpy(),delimiter="\t")
+        np.savetxt("../data/{}_diffs.csv".format(args.dataset_id),diffs.numpy(),delimiter="\t")
+        np.savetxt("../data/{}_incons.csv".format(args.dataset_id),incons.numpy(),delimiter="\t")
+        np.savetxt("../data/{}_bias.csv".format(args.dataset_id),bias[:,0,0].numpy(),delimiter="\t")
+
+        print("Finished generating {}".format(args.dataset_id))
+
     else:
 
-        #Write the arguments in a config file so the experiment can be re-run
-        argreader.writeConfigFile("../data/{}{}.ini".format(args.init_from,args.dataset_id))
+        if os.path.exists("../data/{}.ini".format(args.init_from)):
+            #Write the arguments in a config file so the experiment can be re-run if the original dataset is artificial
+            argreader.writeConfigFile("../data/{}{}.ini".format(args.init_from,args.dataset_id))
 
         #The number of contents of the old dataset:
         old_scores = np.genfromtxt("../data/{}_scores.csv".format(args.init_from),delimiter="\t",dtype=str)
         videoRef = old_scores[1:,0]
         nb_content_old = len(np.unique(videoRef))
         nb_annot_old = old_scores.shape[1]-2
-
 
         #Checking if the number of video per reference if constant
         vidDict = {}
@@ -168,9 +175,12 @@ def main(argv=None):
 
         nb_video_per_content_old = len(videoRef)//nb_content_old if constantVideoPerRef else None
 
+        #the permutation use for permuting the annotators randomly
+        perm = np.random.permutation(nb_annot_old)
+
         #If the dataset to use is an artififical one, ground truth parameters are known
         #and should be processed too
-        if args.init_from.find("artif") != -1:
+        if os.path.exists("../data/{}.ini".format(args.init_from)):
 
             trueScores = np.genfromtxt("../data/{}_trueScores.csv".format(args.init_from),delimiter="\t")
 
@@ -179,8 +189,12 @@ def main(argv=None):
                 trueScores = trueScores[:args.nb_content,:args.nb_video_per_content]
                 trueScores = trueScores.reshape(-1)
 
-            bias = np.genfromtxt("../data/{}_bias.csv".format(args.init_from),delimiter="\t")[:args.nb_annot]
-            incons = np.genfromtxt("../data/{}_incons.csv".format(args.init_from),delimiter="\t")[:args.nb_annot]
+            bias = np.genfromtxt("../data/{}_bias.csv".format(args.init_from),delimiter="\t")
+            incons = np.genfromtxt("../data/{}_incons.csv".format(args.init_from),delimiter="\t")
+
+
+            bias,incons = bias[perm][:args.nb_annot],incons[perm][:args.nb_annot]
+
             diffs = np.genfromtxt("../data/{}_diffs.csv".format(args.init_from),delimiter="\t")[:args.nb_content]
 
             np.savetxt("../data/{}{}_trueScores.csv".format(args.init_from,args.dataset_id),trueScores,delimiter="\t")
@@ -189,17 +203,20 @@ def main(argv=None):
             np.savetxt("../data/{}{}_diffs.csv".format(args.init_from,args.dataset_id),diffs,delimiter="\t")
 
         scores = np.genfromtxt("../data/{}_scores.csv".format(args.init_from),delimiter="\t",dtype=str)
+        scores[:,2:] = np.transpose(np.transpose(scores[:,2:])[perm])
+
         if constantVideoPerRef:
             scores = scores[1:].reshape(nb_content_old,nb_video_per_content_old,nb_annot_old+2)
             scores = scores[:args.nb_content,:args.nb_video_per_content,:args.nb_annot+2]
             scores = scores.reshape(scores.shape[0]*scores.shape[1],scores.shape[2])
         else:
-            scores = scores[:,:args.nb_annot+2]
+            scores = scores[1:,:args.nb_annot+2]
 
-        header = "videos\tencode"+"".join(["\t{}".format(i) for i in range(args.nb_annot)])+"\n"
-        np.savetxt("../data/{}{}_scores.csv".format(args.init_from,args.dataset_id),scores.astype(str),delimiter="\t",fmt='%s',header=header,comments='')
+        header = "videos\tencode"+"".join(["\t{}".format(i) for i in range(args.nb_annot)])
+        np.savetxt("../data/{}{}_scores.csv".format(args.init_from,args.dataset_id),scores.astype(str),header=header,delimiter="\t",fmt='%s',comments='')
 
-    print("Finished generating artifData{}".format(args.dataset_id))
+        print("Finished generating {}{}".format(args.init_from,args.dataset_id))
+
 def meanvar_to_alphabeta(mean,var):
 
     #print(torch.pow(mean,2))
