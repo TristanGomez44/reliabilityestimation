@@ -53,7 +53,8 @@ class MLE(nn.Module):
         x = xInt.float()
         scoresDis = self.compScoreDis(x.is_cuda)
 
-        x = generateData.betaNormalize(x,self.score_min,self.score_max)
+        if self.score_dis:
+            x = generateData.betaNormalize(x,self.score_min,self.score_max)
 
         #print(scoresDis.log_prob(x.unsqueeze(2)))
         #sys.exit(0)
@@ -168,28 +169,33 @@ class MLE(nn.Module):
 
         self.setParams(annot_bias,annot_incons,video_ambTensor,vid_score)
 
-    def init(self,dataInt,datasetName,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init):
+    def init(self,dataInt,datasetName,score_dis,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init):
 
         self.init_base(dataInt)
         paramNameList = list(self.state_dict().keys())
 
-        gtParamDict = {}
-        for paramName in paramNameList:
-            gtParamDict[paramName] = np.genfromtxt("../data/{}_{}.csv".format(datasetName,paramName))
+        #if the list of parameters not to set at ground truth iis long as the number of parameters
+        #it means that all parameters will be initialised with aproximation
+        if len(paramNameList) > len(paramNotGT):
 
-        for key in paramNameList:
+            gtParamDict = {}
+            for paramName in paramNameList:
 
-            tensor = torch.tensor(gtParamDict[key]).view(getattr(self,key).size()).float()
+                gtParamDict[paramName] = np.genfromtxt("../data/{}_{}.csv".format(datasetName,paramName))
 
-            oriSize = tensor.size()
-            tensor = tensor.view(-1)
+            for key in paramNameList:
 
-            tensor = tensor.view(oriSize)
+                tensor = torch.tensor(gtParamDict[key]).view(getattr(self,key).size()).float()
 
-            if key == "incons" or key == "diffs":
-                tensor = torch.log(tensor/(1-tensor))
+                oriSize = tensor.size()
+                tensor = tensor.view(-1)
 
-            setattr(self,key,nn.Parameter(tensor))
+                tensor = tensor.view(oriSize)
+
+                if (key == "incons" or key == "diffs") and score_dis=="Beta":
+                    tensor = torch.log(tensor/(1-tensor))
+
+                setattr(self,key,nn.Parameter(tensor))
 
         functionNameDict = {'bias':bias_init,'trueScores':true_scores_init,'diffs':diffs_init,'incons':incons_init}
 
@@ -198,9 +204,9 @@ class MLE(nn.Module):
             initFunc = getattr(self,functionNameDict[key])
 
             tensor = initFunc(dataInt)
-            if key=="diffs" or key=="incons":
+            if (key == "incons" or key == "diffs") and score_dis=="Beta":
+                #print(tensor)
                 tensor = torch.log(tensor/(1-tensor))
-
             setattr(self,key,nn.Parameter(tensor))
 
     def tsInitBase(self,dataInt):
@@ -222,7 +228,7 @@ class MLE(nn.Module):
             content_amb[i] = torch.sqrt(video_amb[sumInd:sumInd+self.distorNbList[i]].mean())
             sumInd += self.distorNbList[i]
 
-        return content_amb
+        return torch.clamp(content_amb,0.01,0.99)
 
     def dInitWithIncons(self,dataInt):
 
@@ -264,21 +270,23 @@ class MLE(nn.Module):
 
             self.disDict = {}
             dataConf = configparser.ConfigParser()
-            dataConf.read("../data/{}.ini".format(dataset))
+            if os.path.exists("../data/{}.ini".format(dataset)):
+                dataConf.read("../data/{}.ini".format(dataset))
 
-            #self.disDict = {"diffs":Beta(float(dataConf['diff_alpha']), float(dataConf["diff_beta"])), \
-            #                "incons":Beta(float(dataConf["incons_alpha"]), float(dataConf["incons_beta"])),\
-            #                "bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
+                #self.disDict = {"diffs":Beta(float(dataConf['diff_alpha']), float(dataConf["diff_beta"])), \
+                #                "incons":Beta(float(dataConf["incons_alpha"]), float(dataConf["incons_beta"])),\
+                #                "bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
 
-            #self.paramProc = {"diffs":lambda x:torch.sigmoid(x), \
-            #                 "incons":lambda x:torch.sigmoid(x),\
-            #                 "bias":lambda x:x}
+                #self.paramProc = {"diffs":lambda x:torch.sigmoid(x), \
+                #                 "incons":lambda x:torch.sigmoid(x),\
+                #                 "bias":lambda x:x}
 
-            dataConf = dataConf['default']
-            self.disDict = {"bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
+                dataConf = dataConf['default']
+                self.disDict = {"bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
 
-            self.paramProc = {"bias":lambda x:x}
-
+                self.paramProc = {"bias":lambda x:x}
+            else:
+                raise ValueError("Prior oracle require artificial dataset with a config file")
         elif priorName == "uniform":
             self.prior = self.unifPrior
             self.disDict = None
