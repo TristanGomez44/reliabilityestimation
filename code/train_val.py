@@ -23,8 +23,6 @@ import glob
 from torch.distributions.beta import Beta
 
 
-
-
 def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
 
     confInterList = processResults.computeConfInter(loss,model)
@@ -35,8 +33,9 @@ def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
         if model.score_dis == "Beta":
             if (keys[i] =="diffs" or keys[i]=="incons"):
                 tensor = torch.sigmoid(tensor)
-            if keys[i] ==  "trueScores":
-                tensor = torch.clamp(tensor,score_min,score_max)
+
+        if keys[i] ==  "trueScores":
+            tensor = torch.clamp(tensor,score_min,score_max)
 
         tensor = tensor.cpu().detach().numpy().reshape(-1)[:,np.newaxis]
 
@@ -247,15 +246,14 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
 
         loss = one_epoch_train(model,optimizer,trainSet,epoch, args,args.lr[lrCounter])
 
-        if args.comp_dist:
-            #Computing distance for all parameters
-            for key in oldParam.keys():
-                distDict[key][epoch-1] = torch.pow(oldParam[key]-getattr(model,key),2).sum()
-                distDict["all"][epoch-1] += distDict[key][epoch-1]
-            for key in  oldParam.keys():
-                distDict[key][epoch-1] = np.sqrt(distDict[key][epoch-1])
-            distDict["all"][epoch-1] = np.sqrt(distDict["all"][epoch-1])
-            dist = distDict["all"][epoch-1]
+        #Computing distance for all parameters
+        for key in oldParam.keys():
+            distDict[key][epoch-1] = torch.pow(oldParam[key]-getattr(model,key),2).sum()
+            distDict["all"][epoch-1] += distDict[key][epoch-1]
+        for key in  oldParam.keys():
+            distDict[key][epoch-1] = np.sqrt(distDict[key][epoch-1])
+        distDict["all"][epoch-1] = np.sqrt(distDict["all"][epoch-1])
+        dist = distDict["all"][epoch-1]
 
         epoch += 1
 
@@ -263,19 +261,18 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
             paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max)
             torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
 
-    if args.comp_dist:
-        #Writing the array in a csv file
-        if epoch<args.epochs:
-            for key in distDict.keys():
-                distDict[key] = distDict[key][:epoch]
+    #Writing the array in a csv file
+    if epoch<args.epochs:
+        for key in distDict.keys():
+            distDict[key] = distDict[key][:epoch]
 
-        fullDistArray = np.concatenate([distDict[key][:,np.newaxis] for key in  distDict.keys()],axis=1)
+    fullDistArray = np.concatenate([distDict[key][:,np.newaxis] for key in  distDict.keys()],axis=1)
 
-        header = ''
-        for i,key in enumerate(distDict.keys()):
-            header += key+"," if i<len(distDict.keys())-1 else key
+    header = ''
+    for i,key in enumerate(distDict.keys()):
+        header += key+"," if i<len(distDict.keys())-1 else key
 
-        np.savetxt("../results/{}/model{}_dist.csv".format(args.exp_id,args.ind_id),fullDistArray,header=header,delimiter=",",comments='')
+    np.savetxt("../results/{}/model{}_dist.csv".format(args.exp_id,args.ind_id),fullDistArray,header=header,delimiter=",",comments='')
 
     print("\tStopped at epoch ",epoch,"dist",distDict["all"][epoch-2].item())
     return loss,epoch
@@ -291,8 +288,6 @@ def main(argv=None):
 
     argreader.parser.add_argument('--init_id',type=str,metavar="N",help='The index of the model to use as initialisation. \
                                                                             The weight of the last epoch will be used.')
-
-    argreader.parser.add_argument('--comp_dist',action='store_true',help='To compute the distance travelled by each parameters between each epochs.')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -330,7 +325,7 @@ def main(argv=None):
 
     #Inititialise the model
     if args.start_mode == "init":
-        model.init(trainSet,args.dataset,args.param_not_gt,\
+        model.init(trainSet,args.dataset,args.score_dis,args.param_not_gt,\
                     args.true_scores_init,args.bias_init,args.diffs_init,args.incons_init)
 
         startEpoch=1
