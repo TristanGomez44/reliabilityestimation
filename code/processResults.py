@@ -31,66 +31,155 @@ from sklearn.manifold import TSNE
 
 paramKeys = ["bias","incons","diffs","trueScores"]
 
-def baseLineError(datasetName,refDict):
-
+def baseLineError(datasetName,baseLineRefDict):
     dataset,_ = load_data.loadData(datasetName)
     baseDict,_ = computeBaselines(dataset)
 
     errDict = {}
-    for key in refDict.keys():
-        errDict[key] = np.sqrt(np.power(baseDict[key]-refDict[key],2).sum()/len(refDict[key]))
+    for key in baseLineRefDict.keys():
+        errDict[key] = np.sqrt(np.power(baseDict[key]-baseLineRefDict[key],2).sum()/len(baseLineRefDict[key]))
 
     return errDict
 
-def convSpeed(exp_id,refModelId):
+def convSpeed(exp_id,refModelIdList,varParam):
 
     modelConfigPaths = sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)
     modelIds = list(map(lambda x:findNumbers(os.path.basename(x)),modelConfigPaths))
 
-    modelConfigsPath,modelIds = zip(*list(filter(lambda x:x[1] != refModelId,zip(modelConfigPaths,modelIds))))
+    #modelConfigsPath,modelIds = zip(*list(filter(lambda x:not x[1] in refModelIdList,zip(modelConfigPaths,modelIds))))
 
-    refTrueScoresPath = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,refModelId)),key=findNumbers)[-1]
-    refTrueScores = np.genfromtxt(refTrueScoresPath,delimiter="\t")[:,0]
     modelConf = configparser.ConfigParser()
-    modelConf.read("../models/{}/model{}.ini".format(exp_id,refModelId))
-    datasetName = modelConf['default']["dataset"]
-    dataset,_ = load_data.loadData(datasetName)
-    refDict,_ = computeBaselines(dataset)
+    refTrueScoresDict = {}
+    allBaseDict = {}
+    refDatasetName = []
+    for refModelId in refModelIdList:
 
-    errorArray = np.zeros(len(modelConfigsPath))
-    nbAnnotArray = np.zeros(len(modelConfigsPath))
+        refTrueScoresPath = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,refModelId)),key=findNumbers)[-1]
+        refTrueScores = np.genfromtxt(refTrueScoresPath,delimiter="\t")[:,0]
+        modelConf.read("../models/{}/model{}.ini".format(exp_id,refModelId))
+
+        dataset,_ = load_data.loadData(modelConf['default']["dataset"])
+        baseLineRefDict,_ = computeBaselines(dataset)
+        refDatasetName.append(modelConf['default']["dataset"])
+
+        baseColMaps = cm.Blues(np.linspace(0, 1,int(1.5*len(baseLineRefDict.keys()))))
+        baseColMapsDict = {}
+        for i,key in enumerate(baseLineRefDict):
+            baseColMapsDict[key] = baseColMaps[-i-1]
+
+        refTrueScoresDict[modelConf['default'][varParam]] = refTrueScores
+        allBaseDict[modelConf['default'][varParam]] = baseLineRefDict
+
+    errorArray = np.zeros(len(modelConfigPaths))
+    nbAnnotArray = np.zeros(len(modelConfigPaths))
     #Store the error of each baseline method
     errorArrayDict = {}
-    for key in refDict:
-        errorArrayDict[key] = np.zeros(len(modelConfigsPath))
+    for key in baseLineRefDict:
+        errorArrayDict[key] = np.zeros(len(modelConfigPaths))
 
-    for i,modelPath in enumerate(modelConfigsPath):
+    paramValueList = []
+    colorInds = []
+
+
+    #Will contain a list of error for each value of the varying parameters
+    valuesDict = {}
+    baseDict = {}
+    for i,modelPath in enumerate(modelConfigPaths):
         modelConf = configparser.ConfigParser()
         modelConf.read(modelPath)
         datasetName = modelConf['default']["dataset"]
         modelId = modelConf['default']["ind_id"]
+        paramValue = modelConf['default'][varParam]
+
+        if not paramValue in paramValueList:
+            paramValueList.append(paramValue)
+
+        colorInds.append(paramValueList.index(paramValue))
 
         dataConf = configparser.ConfigParser()
-        dataConf.read("../data/{}.ini".format(datasetName))
-        nbAnnotArray[i] = dataConf['default']["nb_annot"]
-
+        if os.path.exists("../data/{}.ini".format(datasetName)):
+            dataConf.read("../data/{}.ini".format(datasetName))
+            nbAnnot = dataConf['default']["nb_annot"]
+        else:
+            nbAnnot = np.genfromtxt("../data/{}_scores.csv".format(datasetName)).shape[1]-2
         trueScoresPath = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,modelId)),key=findNumbers)[-1]
         trueScores = np.genfromtxt(trueScoresPath,delimiter="\t")[:,0]
 
-        errorArray[i] = np.sqrt(np.power(trueScores-refTrueScores,2).sum()/len(refTrueScores))
+        error = np.sqrt(np.power(trueScores-refTrueScoresDict[paramValue],2).sum()/len(refTrueScoresDict[paramValue]))
 
-        errDict = baseLineError(datasetName,refDict)
+        #Computing the baseline error relative to the right baseline
+        errDict = baseLineError(datasetName,allBaseDict[paramValue])
         for key in errorArrayDict:
             errorArrayDict[key][i] = errDict[key]
 
-    plt.figure()
+        if not paramValue in valuesDict.keys():
+            valuesDict[paramValue] = [(error,nbAnnot)]
+            baseDict[paramValue] = {}
+
+            for key in errDict.keys():
+                baseDict[paramValue][key] = [(errDict[key],nbAnnot)]
+
+        else:
+            valuesDict[paramValue].append((error,nbAnnot))
+
+            for key in errDict.keys():
+                baseDict[paramValue][key].append((errDict[key],nbAnnot))
+
+    colors = cm.autumn(np.linspace(0, 1,len(paramValueList)))
+    markers = [m for m, func in Line2D.markers.items() if func != 'nothing' and m not in Line2D.filled_markers]
+
+    #colors = list(map(lambda x:colors[x],colorInds))
+    paramValueList = list(map(lambda x:paramValueList[x],colorInds))
+    #markers = list(map(lambda x:markers[x],colorInds))
+
+    fig = plt.figure(figsize=(7,5))
+    ax = fig.add_subplot(111)
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+
     plt.xlabel("Nb of annotators")
     plt.ylabel("RMSE")
-    plt.scatter(nbAnnotArray,errorArray)
-    for key in errorArrayDict:
-        plt.scatter(nbAnnotArray,errorArrayDict[key],label=key)
-    plt.legend()
-    plt.savefig("../vis/{}/convSpeed.png".format(exp_id))
+
+    def agregate(pairList):
+
+        nbAnnotAgreg = []
+        ymeans = []
+        yerr = []
+
+        pairList = sorted(pairList,key=lambda x:x[1])
+        err,nb_annot = zip(*pairList)
+
+        errToAgreg = [err[0]]
+        nbAnnotAgreg = [nb_annot[0]]
+        for j in range(1,len(err)):
+            if nb_annot[j] != nb_annot[j-1]:
+                ymeans.append(np.array(errToAgreg).mean())
+                yerr.append(np.array(errToAgreg).std())
+                nbAnnotAgreg.append(nb_annot[j])
+                errToAgreg = [err[j]]
+            else:
+                errToAgreg.append(err[j])
+
+        ymeans.append(np.array(errToAgreg).mean())
+        yerr.append(np.array(errToAgreg).std())
+        #errToAgreg = [err[0]]
+        #nbAnnotAgreg = [nb_annot[0]]
+
+        print(nbAnnotAgreg,ymeans,yerr)
+        return nbAnnotAgreg,ymeans,yerr
+
+    for i,paramValue in enumerate(valuesDict.keys()):
+
+        nbAnnotAgreg,ymeans,yerr = agregate(valuesDict[paramValue])
+
+        plt.errorbar(nbAnnotAgreg,ymeans,yerr=yerr,color=colors[i],label=paramValue,marker=markers[i])
+
+        for key in baseDict[paramValue]:
+            nbAnnotAgreg,ymeans,yerr=agregate(baseDict[paramValue][key])
+            plt.errorbar(nbAnnotAgreg,ymeans,yerr=yerr,color=baseColMapsDict[key],marker=markers[i],label=paramValue+","+key)
+
+    fig.legend(loc='right')
+    plt.savefig("../vis/{}/{}_convSpeed.png".format(exp_id,'_'.join(refDatasetName)))
 
 def distHeatMap(exp_id,params,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=100):
 
@@ -204,7 +293,6 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
                                     int(modelConf["score_min"]),int(modelConf["score_max"]),float(modelConf["div_beta_var"]))
 
     paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)))
-    print(paramsPaths)
 
     tensorDict = {"bias":np.zeros((len(paramsPaths),getattr(model,"bias").size(0))),\
                   "incons":np.zeros((len(paramsPaths),getattr(model,"incons").size(0))),\
@@ -809,7 +897,8 @@ def main(argv=None):
     argreader.parser.add_argument('--dist_heatmap',type=str,nargs="*",help='To plot the average distance travelled by parameters at the end of training for each model. The value of this argument is a list\
                                     of parameters to plot.')
 
-    argreader.parser.add_argument('--conv_speed',type=int,metavar='ID',help='To plot the error as a function of the number of annotator. The value of the argument is the id of the reference model.')
+    argreader.parser.add_argument('--conv_speed',type=str,nargs="*",metavar='ID',help='To plot the error as a function of the number of annotator. The values of the first arguments are the IDs of the reference models\
+                                    and the last value is the name of the parameter varying between the reference models.')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -893,7 +982,7 @@ def main(argv=None):
         distHeatMap(args.exp_id,args.dist_heatmap)
 
     if args.conv_speed:
-        convSpeed(args.exp_id,args.conv_speed)
+        convSpeed(args.exp_id,np.array(args.conv_speed)[:-1].astype(int),args.conv_speed[-1])
 
 if __name__ == "__main__":
     main()
