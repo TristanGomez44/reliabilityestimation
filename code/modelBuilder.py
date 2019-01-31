@@ -53,7 +53,7 @@ class MLE(nn.Module):
         x = xInt.float()
         scoresDis = self.compScoreDis(x.is_cuda)
 
-        if self.score_dis:
+        if self.score_dis == "Beta":
             x = generateData.betaNormalize(x,self.score_min,self.score_max)
 
         #print(scoresDis.log_prob(x.unsqueeze(2)))
@@ -214,6 +214,9 @@ class MLE(nn.Module):
 
     def bInitBase(self,dataInt):
         return (dataInt.float()-self.trueScores.unsqueeze(1).expand_as(dataInt)).mean(dim=0)
+
+    def bInitZeros(self,dataInt):
+        return torch.zeros(dataInt.size(1))
 
     def dInitBase(self,dataInt):
 
