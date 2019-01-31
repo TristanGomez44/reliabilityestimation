@@ -154,9 +154,8 @@ def main(argv=None):
 
     else:
 
-        if os.path.exists("../data/{}.ini".format(args.init_from)):
-            #Write the arguments in a config file so the experiment can be re-run if the original dataset is artificial
-            argreader.writeConfigFile("../data/{}{}.ini".format(args.init_from,args.dataset_id))
+        #Write the arguments in a config file so the experiment can be re-run if the original dataset is artificial
+        argreader.writeConfigFile("../data/{}{}.ini".format(args.init_from,args.dataset_id))
 
         #The number of contents of the old dataset:
         old_scores = np.genfromtxt("../data/{}_scores.csv".format(args.init_from),delimiter="\t",dtype=str)
@@ -191,7 +190,6 @@ def main(argv=None):
 
             bias = np.genfromtxt("../data/{}_bias.csv".format(args.init_from),delimiter="\t")
             incons = np.genfromtxt("../data/{}_incons.csv".format(args.init_from),delimiter="\t")
-
 
             bias,incons = bias[perm][:args.nb_annot],incons[perm][:args.nb_annot]
 
