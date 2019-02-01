@@ -308,11 +308,11 @@ def main(argv=None):
     if not (os.path.exists("../models/{}".format(args.exp_id))):
         os.makedirs("../models/{}".format(args.exp_id))
 
-    #Write the arguments in a config file so the experiment can be re-run
-    argreader.writeConfigFile("../models/{}/model{}.ini".format(args.exp_id,args.ind_id))
-
     #Loading data
     trainSet,distorNbList = load_data.loadData(args.dataset)
+
+    #Write the arguments in a config file so the experiment can be re-run
+    argreader.writeConfigFile("../models/{}/model{}.ini".format(args.exp_id,args.ind_id))
 
     if args.cuda:
         trainSet = trainSet.cuda()
