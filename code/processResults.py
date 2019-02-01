@@ -470,7 +470,7 @@ def fakeDataDIstr(args):
     dataConf.read("../data/{}.ini".format(args.dataset))
     dataConf = dataConf['default']
 
-    paramNameList = ["trueScores","diffs","incons","bias"]
+    paramKeys = ["trueScores","diffs","incons","bias"]
     dx = 0.01
 
 
@@ -484,7 +484,7 @@ def fakeDataDIstr(args):
                 "incons":torch.arange(0,1,dx),\
                 "bias":torch.arange(-3*float(dataConf["bias_std"]),3*float(dataConf["bias_std"]),dx)}
 
-    for i,paramName in enumerate(paramNameList):
+    for i,paramName in enumerate(paramKeys):
 
         paramValues = np.genfromtxt("../data/artifData{}_{}.csv".format(dataConf["dataset_id"],paramName))
         trueCDF = dist_dic[paramName](range_dic[paramName]).numpy().reshape(-1)
@@ -521,7 +521,6 @@ def getModels(args,trainSet,distorNbList):
     return modelList,modelNameList,lossList
 
 def PolyCoefficients(x, coeffs):
-
     o = len(coeffs)
 
     y = 0
@@ -757,16 +756,24 @@ def plotMLE(lossList,modelList,modelNameList,exp_id,dataset=None,ind_id=None,mos
             plt.hist(values,10,density=True)
             plt.savefig("../vis/{}/{}_hist.png".format(exp_id,key))
 
-def error(dictPred,dictGT,paramNames):
+def error(dictPred,dictGT,paramNames,errFunc):
 
     errList = []
 
     for name in paramNames:
-        errList.append(errorVec(dictPred[name][:,0],dictGT[name]))
+
+        errList.append(errorVec(dictPred[name][:,0],dictGT[name],errFunc))
 
     return errList
 
-def errorVec(vec,vec_ref):
+def relative(vec,vec_ref):
+    return (np.abs(vec_ref-vec)/np.abs(vec_ref)).mean()
+
+def rmse(vec,vec_ref):
+
+    return np.sqrt(np.power(vec_ref-vec,2).sum()/len(vec))
+
+def errorVec(vec,vec_ref,errFunc):
 
     if not (type(vec) is np.ndarray):
         if vec.is_cuda:
@@ -777,8 +784,7 @@ def errorVec(vec,vec_ref):
             vec_ref = vec_ref.cpu()
         vec_ref = vec_ref.detach().numpy()
 
-
-    return (np.abs(vec_ref-vec)/np.abs(vec_ref)).mean()
+    return errFunc(vec,vec_ref)
 
 def includPerc(dictPred,dictGT,paramNames):
 
@@ -800,19 +806,27 @@ def extractParamName(path):
     path = os.path.basename(path).replace(".csv","")
     return path[path.find("_")+1:]
 
-def compareWithGroundTruth(exp_id,dataset,varParams):
+def getGT(dataset,gtParamDict,paramKeys):
 
-    paramFiles = glob.glob("../data/{}_*.csv".format(dataset))
-    paramFiles.remove("../data/{}_scores.csv".format(dataset))
-    paramNameList = sorted(list(map(extractParamName,paramFiles)))
+    if not dataset in gtParamDict.keys():
+        gtParamDict[dataset] = {}
 
-    gtParamDict = {}
-    for paramName in paramNameList:
-        gtParamDict[paramName] = np.genfromtxt("../data/{}_{}.csv".format(dataset,paramName))
+        for param in paramKeys:
+            gtParamDict[dataset][param] = np.genfromtxt("../data/{}_{}.csv".format(dataset,param))
+
+    return gtParamDict[dataset]
+
+def compareWithGroundTruth(exp_id,varParams,error_metric):
+
+    errFunc = globals()[error_metric]
+
+    allGtParamDict = {}
+    #for paramName in paramKeys:
+    #    gtParamDict[paramName] = np.genfromtxt("../data/{}_{}.csv".format(dataset,paramName))
 
     paramsDicList = []
     modelConfigPaths = sorted(glob.glob("../models/{}/*.ini".format(exp_id)),key=findNumbers)
-    csvHead = "{}".format(varParams)+"".join(["\t{}".format(paramNameList[i]) for i in range(len(paramNameList))])
+    csvHead = "{}".format(varParams)+"".join(["\t{}".format(paramKeys[i]) for i in range(len(paramKeys))])
 
     csvErr = ""
     csvInclu = ""
@@ -821,34 +835,81 @@ def compareWithGroundTruth(exp_id,dataset,varParams):
 
         modelInd = findNumbers(os.path.basename(modelConfigPaths[i]))
 
-        config = configparser.ConfigParser()
-        config.read(modelConfigPaths[i])
-        config = config["default"]
-        paramValue = ''
-        for varParam in varParams:
-            paramValue += config[varParam]+","
+        dataset_id = readConfFile(modelConfigPaths[i],["dataset"])[0]
+
+        paramValue = ",".join(readConfFile(modelConfigPaths[i],varParams))
+        #print(modelInd)
+
+        #Get the ground truth of the dataset on which this model has been trained
+        gtParamDict = getGT(dataset_id,allGtParamDict,paramKeys)
 
         paramDict = {}
-        for paramName in paramNameList:
-
+        for paramName in paramKeys:
             lastEpochPath = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,modelInd,paramName)),key=findNumbers)[-1]
 
             lastEpoch = findNumbers(os.path.basename(lastEpochPath).replace("model{}".format(modelInd),""))
             paramDict[paramName] = np.genfromtxt("../results/{}/model{}_epoch{}_{}.csv".format(exp_id,modelInd,lastEpoch,paramName))
 
-        errors = error(paramDict,gtParamDict,paramNameList)
+        errors = error(paramDict,gtParamDict,paramKeys,errFunc)
         csvErr += "{}".format(paramValue)+"".join(["\t{}".format(round(100*errors[i],2)) for i in range(len(errors))])+"\n"
 
-        incPer = includPerc(paramDict,gtParamDict,paramNameList)
+        incPer = includPerc(paramDict,gtParamDict,paramKeys)
         csvInclu += "{}".format(paramValue)+"".join(["\t{}".format(round(100*incPer[i],2)) for i in range(len(incPer))])+"\n"
 
-    with open("../results/{}/err_{}.csv".format(exp_id,dataset),"w") as text_file:
+    with open("../results/{}/err.csv".format(exp_id),"w") as text_file:
         print(csvHead,file=text_file)
         print(csvErr,file=text_file,end="")
 
-    with open("../results/{}/inclPerc_{}.csv".format(exp_id,dataset),"w") as text_file:
+    with open("../results/{}/inclPerc.csv".format(exp_id),"w") as text_file:
         print(csvHead,file=text_file)
         print(csvInclu,file=text_file)
+
+def agregateCpWGroundTruth(exp_id,resFilePath):
+
+    resFile = np.genfromtxt(resFilePath,delimiter="\t",dtype="str")
+    header = resFile[0]
+    resFile = resFile[1:]
+
+    #Grouping the lines using the value of the first column
+    groupedLines = {}
+    for line in resFile:
+        if line[0] in groupedLines.keys():
+            groupedLines[line[0]].append(line)
+        else:
+            groupedLines[line[0]] = [line]
+
+    csv = "\t".join(header)+"\n"
+    mean = np.zeros((len(groupedLines.keys()),resFile.shape[1]-1))
+    std =  np.zeros((len(groupedLines.keys()),resFile.shape[1]-1))
+
+    for i,key in enumerate(groupedLines.keys()):
+        groupedLines[key] = np.array(groupedLines[key])[:,1:].astype(float)
+
+        mean[i] =  groupedLines[key].mean(axis=0)
+        std[i] = 1.96*groupedLines[key].std(axis=0)/np.sqrt(len(groupedLines[key]))
+
+        print(mean[i])
+        print(std[i])
+
+        csv += key
+        for j in range(len(mean[0])):
+            csv += "\t"+str(round(mean[i,j],2))+"\pm"+str(round(std[i,j],2))
+
+        csv += "\n"
+
+    with open(resFilePath.replace(".csv","_agreg.csv"),"w") as text_file:
+        print(csv,file=text_file)
+
+    plt.figure()
+
+    for i in range(len(mean)):
+        plt.bar(np.arange(resFile.shape[1]-1)+0.1*i,mean[i],width=0.1,label=list(groupedLines.keys())[i])
+
+    imageName = os.path.basename(resFilePath).replace(".csv",".png")
+    plt.legend()
+
+    plt.xticks(np.arange(resFile.shape[1]-1),header[1:],rotation=45,horizontalalignment="right")
+    plt.savefig("../vis/{}/{}".format(exp_id,imageName))
 
 def findNumbers(x):
     '''Extracts the numbers of a string and returns them as an integer'''
@@ -869,6 +930,10 @@ def main(argv=None):
                                 with the parameters tuned to model this function')
     argreader.parser.add_argument('--comp_gt',type=str,nargs="*",metavar='PARAM',help='To compare the parameters found with the ground truth parameters. Require a fake dataset. The argument should\
                                     be the name of the parameter varying across the different models in the experiment.')
+    argreader.parser.add_argument('--comp_gt_agr',type=str,nargs="*",metavar='PARAM',help='To compare the parameters found with the ground truth parameters. Require a fake dataset. The argument should\
+                                    be the name of the parameter varying across the different models in the experiment. The accuracies of models having the same value for those parameters will be agregated.')
+    argreader.parser.add_argument('--error_metric',type=str,metavar='ERROR',default="RMSE",help='The error metric used in \'--comp_gt\' and \'--comp_gt_agr\'. Can be \'rmse\' or \'relative\'. Default is \'RMSE\'.')
+
     argreader.parser.add_argument('--artif_data',action='store_true',help='To plot the real and empirical distribution of the parameters of a fake dataset. \
                                     The fake dataset to plot is set by the --dataset argument')
     argreader.parser.add_argument('--distr_plot',type=int,help='To plot the distribution of each score for a given model. The argument value is the model id. \
@@ -942,7 +1007,11 @@ def main(argv=None):
         mean_std_plot(trainSet,distorNbList,args.dataset,args.exp_id,model)
 
     if args.comp_gt:
-        compareWithGroundTruth(args.exp_id,args.dataset,args.comp_gt)
+        compareWithGroundTruth(args.exp_id,args.comp_gt,args.error_metric)
+    if args.comp_gt_agr:
+        compareWithGroundTruth(args.exp_id,args.comp_gt_agr,args.error_metric)
+        agregateCpWGroundTruth(args.exp_id,"../results/{}/err.csv".format(args.exp_id))
+        agregateCpWGroundTruth(args.exp_id,"../results/{}/inclPerc.csv".format(args.exp_id))
 
     if args.artif_data:
         fakeDataDIstr(args)
