@@ -19,7 +19,7 @@ from torch.distributions.normal import Normal
 import configparser
 
 import generateData
-
+import os
 class MLE(nn.Module):
     ''' Implement the model proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
 
@@ -275,21 +275,33 @@ class MLE(nn.Module):
             dataConf = configparser.ConfigParser()
             if os.path.exists("../data/{}.ini".format(dataset)):
                 dataConf.read("../data/{}.ini".format(dataset))
-
-                #self.disDict = {"diffs":Beta(float(dataConf['diff_alpha']), float(dataConf["diff_beta"])), \
-                #                "incons":Beta(float(dataConf["incons_alpha"]), float(dataConf["incons_beta"])),\
-                #                "bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
-
-                #self.paramProc = {"diffs":lambda x:torch.sigmoid(x), \
-                #                 "incons":lambda x:torch.sigmoid(x),\
-                #                 "bias":lambda x:x}
-
                 dataConf = dataConf['default']
-                self.disDict = {"bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
 
-                self.paramProc = {"bias":lambda x:x}
+                self.disDict = {"diffs":Beta(float(dataConf['diff_alpha']), float(dataConf["diff_beta"])), \
+                                "incons":Beta(float(dataConf["incons_alpha"]), float(dataConf["incons_beta"])),\
+                                "bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
+
+                self.paramProc = {"diffs":lambda x:torch.sigmoid(x), \
+                                 "incons":lambda x:torch.sigmoid(x),\
+                                 "bias":lambda x:x}
+
             else:
-                raise ValueError("Prior oracle require artificial dataset with a config file")
+                raise ValueError("Oracle prior require artificial dataset with a config file")
+        elif priorName == "oracle_bias":
+
+            self.prior = self.oraclePrior
+
+            self.disDict = {}
+            dataConf = configparser.ConfigParser()
+            if os.path.exists("../data/{}.ini".format(dataset)):
+                dataConf.read("../data/{}.ini".format(dataset))
+                dataConf = dataConf['default']
+
+                self.disDict = {"bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
+                self.paramProc = {"bias":lambda x:x}
+
+            else:
+                raise ValueError("Oracle prior require artificial dataset with a config file")
         elif priorName == "uniform":
             self.prior = self.unifPrior
             self.disDict = None
