@@ -188,7 +188,7 @@ def get_OptimConstructor(optimStr,momentum):
 
     elif optimStr == "LBFGS":
         optimConst = optim.LBFGS
-        kwargs = {"history_size":1000,"max_iter":40}
+        kwargs = {}
 
     elif optimStr=="NEWTON":
         optimConst = None
@@ -207,6 +207,7 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
     lrCounter = 0
 
     distArray = np.zeros((args.epochs))
+    lossArray = np.zeros((args.epochs))
 
     distDict = {"bias":distArray.copy(),"trueScores":distArray.copy(),\
                 "incons":distArray.copy(),"diffs":distArray.copy(),"all":distArray.copy()}
@@ -245,6 +246,7 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
             oldParam[key] = getattr(model,key).clone()
 
         loss = one_epoch_train(model,optimizer,trainSet,epoch, args,args.lr[lrCounter])
+        lossArray[epoch-1] = loss
 
         #Computing distance for all parameters
         for key in oldParam.keys():
@@ -264,8 +266,9 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
     #Writing the array in a csv file
     if epoch<args.epochs:
         for key in distDict.keys():
-            distDict[key] = distDict[key][:epoch]
+            distDict[key] = distDict[key][:epoch-1]
 
+    lossArray = lossArray[:epoch-1]
     fullDistArray = np.concatenate([distDict[key][:,np.newaxis] for key in  distDict.keys()],axis=1)
 
     header = ''
@@ -273,6 +276,7 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
         header += key+"," if i<len(distDict.keys())-1 else key
 
     np.savetxt("../results/{}/model{}_dist.csv".format(args.exp_id,args.ind_id),fullDistArray,header=header,delimiter=",",comments='')
+    np.savetxt("../results/{}/model{}_nll.csv".format(args.exp_id,args.ind_id),lossArray,delimiter=",",comments='')
 
     print("\tStopped at epoch ",epoch,"dist",distDict["all"][epoch-2].item())
     return loss,epoch
