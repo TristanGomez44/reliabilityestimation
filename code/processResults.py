@@ -239,7 +239,7 @@ def t_sne(exp_id,model_id,start_epoch):
 
         plt.savefig("../vis/{}/model{}_{}_tsne.png".format(exp_id,model_id,key))
 
-def plotDist(exp_id,ind_list):
+def plotDistNLL(exp_id,ind_list):
 
     colors = cm.rainbow(np.linspace(0, 1, len(paramKeys)+1))
 
@@ -250,8 +250,13 @@ def plotDist(exp_id,ind_list):
         markers = markers[:len(ind_list)]
 
     fig = plt.figure(figsize=(60,5))
-    ax = fig.add_subplot(111)
-    ax.set_yscale('log')
+    axDist = fig.add_subplot(111)
+    axNLL = axDist.twinx()
+
+    axDist.set_yscale('log')
+    #axNLL.set_yscale("linear")
+    minLL = None
+    maxLL = None
 
     for i,ind in enumerate(ind_list):
         distArray = np.genfromtxt("../results/{}/model{}_dist.csv".format(exp_id,ind),delimiter=",",dtype=str)
@@ -260,13 +265,24 @@ def plotDist(exp_id,ind_list):
 
         for j,key in enumerate(header):
             if key != "all":
-                plt.plot(distArray[:,j],label="model{} {}".format(ind,key),color=colors[j],marker=markers[i],alpha=0.5)
+                axDist.plot(distArray[:,j],label="model{} {}".format(ind,key),color=colors[j],marker=markers[i],alpha=0.5)
 
-    box = ax.get_position()
-    ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+        llArray = -np.genfromtxt("../results/{}/model{}_nll.csv".format(exp_id,ind),delimiter=",",dtype=float)
+
+        if (minLL is None or llArray[-100:].min() < minNLL):
+            minLL = llArray[-500:].min()
+        if (maxLL is None or llArray[-100:].max() > maxNLl):
+            maxLL = llArray[-500:].max()
+        axNLL.plot(llArray,label="model{}".format(ind),color="black",marker=markers[i],alpha=0.5)
+
+    box = axDist.get_position()
+    axDist.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+    axNLL.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+    axNLL.set_ylim(bottom=minLL,top=maxLL)
+
     fig.legend(loc='right')
 
-    plt.savefig("../vis/{}/dist_{}.png".format(exp_id,ind_list))
+    plt.savefig("../vis/{}/dist_nll_{}.png".format(exp_id,ind_list))
 
 def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
 
@@ -674,7 +690,6 @@ def robustness(model,trainSet,distorNbList,args,paramValues,paramName,corrKwargs
     plt.figure()
     #rangeAnnot = np.array(rangeAnnot)
 
-
     plt.errorbar(paramValues,mos_err.mean(axis=1), yerr=1.96*mos_err.std(axis=1)/np.sqrt(nbRep),label="MOS")
     plt.errorbar(paramValues,sr_err.mean(axis=1), yerr=1.96*sr_err.std(axis=1)/np.sqrt(nbRep),label="SR-MOS")
     plt.errorbar(paramValues,zs_sr_err.mean(axis=1), yerr=1.96*zs_sr_err.std(axis=1)/np.sqrt(nbRep),label="ZS-SR-MOS")
@@ -907,6 +922,7 @@ def agregateCpWGroundTruth(exp_id,resFilePath):
     imageName = os.path.basename(resFilePath).replace(".csv",".png")
     plt.legend()
 
+    plt.gca().set_ylim(bottom=0)
     plt.xticks(np.arange(resFile.shape[1]-1),header[1:],rotation=45,horizontalalignment="right")
     plt.savefig("../vis/{}/{}".format(exp_id,imageName))
 
@@ -924,11 +940,10 @@ def ttest_matrix(groupedLines,exp_id,modelKeys,resFilePath):
     mat = np.zeros((len(keys),len(keys),len(modelKeys)))
 
     for i in range(len(keys)):
-        print(groupedLines[keys[i]])
         for j in range(len(keys)):
             for k in range(len(modelKeys)):
                 #print(groupedLines[keys[i]][:,k],k)
-                _,mat[i,j,k] = scipy.stats.ttest_ind(groupedLines[keys[i]][:,k],groupedLines[keys[j]][:,k],equal_var=False)
+                _,mat[i,j,k] = scipy.stats.ttest_ind(groupedLines[keys[i]][:,k],groupedLines[keys[j]][:,k],equal_var=True)
                 #sys.exit(0)
     mat = mat.astype(str)
     for k in range(len(modelKeys)):
@@ -971,7 +986,8 @@ def main(argv=None):
     argreader.parser.add_argument('--scatter_plot',type=int,help='To plot the real and predicted scores of a fake dataset in a 2D plot. \
                                     The first argument should be the model id')
     argreader.parser.add_argument('--plot_param',type=str,nargs="*",help='To plot the error of every parameters at each epoch for each model. The argument values are the index of the models to plot.')
-    argreader.parser.add_argument('--plot_dist',type=int,nargs="*",help='To plot the distance travelled by each parameters. The argument values are the index of the models to plot.')
+    argreader.parser.add_argument('--plot_dist_nll',type=int,nargs="*",help='To plot the distance travelled by each parameters and the negative log-likelihood at each epoch. \
+                                    The argument values are the index of the models to plot.')
 
     argreader.parser.add_argument('--t_sne',type=int,nargs=2,help='To plot the t-sne visualisation of the values taken by the parameters during training. \
                                     The first argument value is the id of the model to plot and the second is the start epoch.')
@@ -1057,8 +1073,8 @@ def main(argv=None):
     if args.plot_param:
         plotParam(args.dataset,args.exp_id,args.plot_param)
 
-    if args.plot_dist:
-        plotDist(args.exp_id,args.plot_dist)
+    if args.plot_dist_nll:
+        plotDistNLL(args.exp_id,args.plot_dist_nll)
 
     if args.t_sne:
         t_sne(args.exp_id,args.t_sne[0],args.t_sne[1])
