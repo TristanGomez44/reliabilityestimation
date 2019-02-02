@@ -120,7 +120,7 @@ class ArgReader():
         self.parser.add_argument('--cuda', type=str2bool, metavar='S',
                             help='To run computations on the gpu')
         self.parser.add_argument('--optim', type=str, metavar='OPTIM',
-                            help='the optimizer algorithm to use (default: \'LBFGS\')')
+                            help='the optimizer algorithm to use (default: \'GD\')')
         self.parser.add_argument('--rob_param', type=str, metavar='S',
                             help='The name of the parameter to vary during \
                                  robustness evaluation. Can be \'nb_annot\' or \'nb_corr\'')
