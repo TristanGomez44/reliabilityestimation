@@ -26,7 +26,7 @@ from torch.distributions.uniform import Uniform
 from torch.distributions.normal import Normal
 from matplotlib.lines import Line2D
 import math
-
+import scipy
 from sklearn.manifold import TSNE
 
 paramKeys = ["bias","incons","diffs","trueScores"]
@@ -866,6 +866,7 @@ def compareWithGroundTruth(exp_id,varParams,error_metric):
 
 def agregateCpWGroundTruth(exp_id,resFilePath):
 
+    #Agregating the results
     resFile = np.genfromtxt(resFilePath,delimiter="\t",dtype="str")
     header = resFile[0]
     resFile = resFile[1:]
@@ -886,10 +887,7 @@ def agregateCpWGroundTruth(exp_id,resFilePath):
         groupedLines[key] = np.array(groupedLines[key])[:,1:].astype(float)
 
         mean[i] =  groupedLines[key].mean(axis=0)
-        std[i] = 1.96*groupedLines[key].std(axis=0)/np.sqrt(len(groupedLines[key]))
-
-        print(mean[i])
-        print(std[i])
+        std[i] = groupedLines[key].std(axis=0)
 
         csv += key
         for j in range(len(mean[0])):
@@ -900,16 +898,47 @@ def agregateCpWGroundTruth(exp_id,resFilePath):
     with open(resFilePath.replace(".csv","_agreg.csv"),"w") as text_file:
         print(csv,file=text_file)
 
+    #Plot the agregated results
     plt.figure()
 
     for i in range(len(mean)):
-        plt.bar(np.arange(resFile.shape[1]-1)+0.1*i,mean[i],width=0.1,label=list(groupedLines.keys())[i])
+        plt.bar(np.arange(resFile.shape[1]-1)+0.1*i,mean[i],width=0.1,label=list(groupedLines.keys())[i],yerr=std[i])
 
     imageName = os.path.basename(resFilePath).replace(".csv",".png")
     plt.legend()
 
     plt.xticks(np.arange(resFile.shape[1]-1),header[1:],rotation=45,horizontalalignment="right")
     plt.savefig("../vis/{}/{}".format(exp_id,imageName))
+
+    #Computing the t-test
+
+    #The header first element is the list of varying parameters and we only want the
+    #parameters name
+    header = header[1:]
+    ttest_matrix(groupedLines,exp_id,header,resFilePath)
+
+def ttest_matrix(groupedLines,exp_id,modelKeys,resFilePath):
+
+    keys = list(groupedLines.keys())
+    #print(keys)
+    mat = np.zeros((len(keys),len(keys),len(modelKeys)))
+
+    for i in range(len(keys)):
+        print(groupedLines[keys[i]])
+        for j in range(len(keys)):
+            for k in range(len(modelKeys)):
+                #print(groupedLines[keys[i]][:,k],k)
+                _,mat[i,j,k] = scipy.stats.ttest_ind(groupedLines[keys[i]][:,k],groupedLines[keys[j]][:,k],equal_var=False)
+                #sys.exit(0)
+    mat = mat.astype(str)
+    for k in range(len(modelKeys)):
+        csv = "\t"+"\t".join(keys)+"\n"
+        for i in range(len(keys)):
+            csv += keys[i]+"\t"+"\t".join(mat[i,:,k])+"\n"
+
+        resFileName = os.path.basename(resFilePath).replace(".csv","")
+        with open("../results/{}/ttest_{}_{}.csv".format(exp_id,modelKeys[k],resFileName),"w") as text_file:
+            print(csv,file=text_file)
 
 def findNumbers(x):
     '''Extracts the numbers of a string and returns them as an integer'''
@@ -932,7 +961,7 @@ def main(argv=None):
                                     be the name of the parameter varying across the different models in the experiment.')
     argreader.parser.add_argument('--comp_gt_agr',type=str,nargs="*",metavar='PARAM',help='To compare the parameters found with the ground truth parameters. Require a fake dataset. The argument should\
                                     be the name of the parameter varying across the different models in the experiment. The accuracies of models having the same value for those parameters will be agregated.')
-    argreader.parser.add_argument('--error_metric',type=str,metavar='ERROR',default="RMSE",help='The error metric used in \'--comp_gt\' and \'--comp_gt_agr\'. Can be \'rmse\' or \'relative\'. Default is \'RMSE\'.')
+    argreader.parser.add_argument('--error_metric',type=str,metavar='ERROR',default="rmse",help='The error metric used in \'--comp_gt\' and \'--comp_gt_agr\'. Can be \'rmse\' or \'relative\'. Default is \'RMSE\'.')
 
     argreader.parser.add_argument('--artif_data',action='store_true',help='To plot the real and empirical distribution of the parameters of a fake dataset. \
                                     The fake dataset to plot is set by the --dataset argument')
