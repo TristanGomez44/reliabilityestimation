@@ -28,6 +28,7 @@ from matplotlib.lines import Line2D
 import math
 import scipy
 from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
 
 paramKeys = ["bias","incons","diffs","trueScores"]
 
@@ -188,11 +189,12 @@ def distHeatMap(exp_id,params,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=100):
 
     for i,configFile in enumerate(configFiles):
 
-        datasetName = readConfFile(configFile,["dataset"])
-
+        datasetName = readConfFile(configFile,["dataset"])[0]
+        #print("../data/{}.ini".format(datasetName))
         nb_annot,nb_video_per_content,nb_content = readConfFile("../data/{}.ini".format(datasetName),["nb_annot","nb_video_per_content","nb_content"])
 
         distFilePath = "../results/{}/model{}_dist.csv".format(exp_id,findNumbers(os.path.basename(configFile)))
+
         distFile = np.genfromtxt(distFilePath,delimiter=",",dtype=str)
         header = distFile[0]
         distFile = distFile[1:].astype(float) + 1e-9
@@ -207,37 +209,45 @@ def distHeatMap(exp_id,params,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=100):
                 neg_log_dist = -np.log10(distFile[-nbEpochsMean:,j].mean())
                 color = colors[int(nbStep*neg_log_dist/maxLog)]
 
-                plt.scatter(nb_annot,nb_video_per_content*nb_content,color=color,s=100)
+                plt.scatter(int(nb_annot),int(nb_video_per_content)*int(nb_content),color=color,s=100)
 
                 if i==len(configFiles)-1:
                     plt.savefig("../vis/{}/distHeatMap_{}.png".format(exp_id,header[j]))
                     plt.close()
 
-def t_sne(exp_id,model_id,start_epoch):
+def plot_points_arrows(repres,filePath,alphas,colors):
+
+    plt.figure()
+
+    for i,point in enumerate(repres):
+        if i<len(repres)-1:
+            plt.plot([repres[i,0],repres[i+1,0]],[repres[i,1],repres[i+1,1]],alpha=alphas[i], zorder=1,color="black")
+
+    plt.scatter(repres[:,0],repres[:,1],color=colors, zorder=2)
+
+    plt.savefig(filePath)
+
+def twoDimRepr(exp_id,model_id,start_epoch):
 
     def getEpoch(path):
         return findNumbers(os.path.basename(path).replace("model{}".format(model_id),""))
 
     for key in paramKeys:
         paramFiles = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,model_id,key)),key=findNumbers)
-        paramFiles = list(filter(lambda x:getEpoch(x)>start_epoch,paramFiles))
 
+
+
+        paramFiles = list(filter(lambda x:getEpoch(x)>start_epoch,paramFiles))
         colors = cm.plasma(np.linspace(0, 1,len(paramFiles)))
 
         params = list(map(lambda x:np.genfromtxt(x)[:,0],paramFiles))
         alphas = np.power(np.arange(len(params))/len(params),4)
 
-        repre_emb = TSNE(n_components=2,init='pca',random_state=1,learning_rate=20).fit_transform(params)
+        repr_tsne = TSNE(n_components=2,init='pca',random_state=1,learning_rate=20).fit_transform(params)
+        repr_pca = PCA(n_components=2).fit_transform(params)
 
-        plt.figure()
-
-        for i,point in enumerate(repre_emb):
-            if i<len(repre_emb)-1:
-                plt.arrow(repre_emb[i,0],repre_emb[i,1],repre_emb[i+1,0]-repre_emb[i,0],repre_emb[i+1,1]-repre_emb[i,1],alpha=alphas[i], zorder=1)
-
-        plt.scatter(repre_emb[:,0],repre_emb[:,1],color=colors, zorder=2)
-
-        plt.savefig("../vis/{}/model{}_{}_tsne.png".format(exp_id,model_id,key))
+        plot_points_arrows(repr_tsne,"../vis/{}/model{}_{}_tsne.png".format(exp_id,model_id,key),alphas,colors)
+        plot_points_arrows(repr_pca,"../vis/{}/model{}_{}_pca.png".format(exp_id,model_id,key),alphas,colors)
 
 def plotDistNLL(exp_id,ind_list):
 
@@ -267,13 +277,14 @@ def plotDistNLL(exp_id,ind_list):
             if key != "all":
                 axDist.plot(distArray[:,j],label="model{} {}".format(ind,key),color=colors[j],marker=markers[i],alpha=0.5)
 
-        llArray = -np.genfromtxt("../results/{}/model{}_nll.csv".format(exp_id,ind),delimiter=",",dtype=float)
+        if os.path.exists("../results/{}/model{}_nll.csv".format(exp_id,ind)):
+            llArray = -np.genfromtxt("../results/{}/model{}_nll.csv".format(exp_id,ind),delimiter=",",dtype=float)
 
-        if (minLL is None or llArray[-100:].min() < minNLL):
-            minLL = llArray[-500:].min()
-        if (maxLL is None or llArray[-100:].max() > maxNLl):
-            maxLL = llArray[-500:].max()
-        axNLL.plot(llArray,label="model{}".format(ind),color="black",marker=markers[i],alpha=0.5)
+            if (minLL is None or llArray[-100:].min() < minNLL):
+                minLL = llArray[-500:].min()
+            if (maxLL is None or llArray[-100:].max() > maxNLl):
+                maxLL = llArray[-500:].max()
+            axNLL.plot(llArray,label="model{}".format(ind),color="black",marker=markers[i],alpha=0.5)
 
     box = axDist.get_position()
     axDist.set_position([box.x0, box.y0, box.width * 0.8, box.height])
@@ -989,7 +1000,7 @@ def main(argv=None):
     argreader.parser.add_argument('--plot_dist_nll',type=int,nargs="*",help='To plot the distance travelled by each parameters and the negative log-likelihood at each epoch. \
                                     The argument values are the index of the models to plot.')
 
-    argreader.parser.add_argument('--t_sne',type=int,nargs=2,help='To plot the t-sne visualisation of the values taken by the parameters during training. \
+    argreader.parser.add_argument('--two_dim_repr',type=int,nargs=2,help='To plot the t-sne visualisation of the values taken by the parameters during training. \
                                     The first argument value is the id of the model to plot and the second is the start epoch.')
 
     argreader.parser.add_argument('--dist_heatmap',type=str,nargs="*",help='To plot the average distance travelled by parameters at the end of training for each model. The value of this argument is a list\
@@ -1076,8 +1087,8 @@ def main(argv=None):
     if args.plot_dist_nll:
         plotDistNLL(args.exp_id,args.plot_dist_nll)
 
-    if args.t_sne:
-        t_sne(args.exp_id,args.t_sne[0],args.t_sne[1])
+    if args.two_dim_repr:
+        twoDimRepr(args.exp_id,args.two_dim_repr[0],args.two_dim_repr[1])
 
     if args.dist_heatmap:
         distHeatMap(args.exp_id,args.dist_heatmap)
