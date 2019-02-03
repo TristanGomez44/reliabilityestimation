@@ -22,6 +22,39 @@ import glob
 
 from torch.distributions.beta import Beta
 
+class GradNoise():
+    '''A class to add gaussian noise in weight update
+
+    To be used with a pytorch hook so this function is called every time there is a weight update
+
+    '''
+
+    def __init__(self,ampl=0.1):
+        '''
+        Args:
+            ampl (float): the ratio of the noise norm to the gradient norm
+        '''
+
+        self.ampl=ampl
+
+    def __call__(self,grad):
+        '''
+        Args:
+            grad (torch.autograd.variable.Variable): the gradient of the udpate
+        Returns:
+            The gradient with added noise
+        '''
+
+        self.noise = torch.tensor(np.random.normal(size=grad.detach().cpu().numpy().shape))/2
+        gradMean = torch.abs(grad).mean()
+        noise =self.ampl*gradMean*self.noise
+
+        #print(gradMean,torch.abs(torch.tensor(noise)).mean(),torch.abs(torch.tensor(noise)).mean()/gradMean)
+
+        if grad.is_cuda:
+            return grad + noise.cuda().type("torch.cuda.FloatTensor")
+        else:
+            return grad + noise.float()
 
 def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
 
@@ -225,7 +258,6 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
         if (epoch-1) % ((args.epochs + 1)//len(args.lr)) == 0 or epoch==startEpoch:
 
             kwargs['lr'] = args.lr[lrCounter]
-
             if lrCounter<len(args.lr)-1:
                 lrCounter += 1
 
@@ -331,7 +363,6 @@ def main(argv=None):
     if args.start_mode == "init":
         model.init(trainSet,args.dataset,args.score_dis,args.param_not_gt,\
                     args.true_scores_init,args.bias_init,args.diffs_init,args.incons_init)
-
         startEpoch=1
     elif args.start_mode == "fine_tune":
         init_path = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,args.init_id)),key=processResults.findNumbers)[-1]
@@ -340,6 +371,11 @@ def main(argv=None):
 
     else:
         raise ValueError("Unknown init method : {}".format(args.start_mode))
+
+    #Adding normal noise to the gradients
+    gradNoise = GradNoise(ampl=args.noise)
+    for p in model.parameters():
+        p.register_hook(gradNoise)
 
     torch.save(model.state_dict(), "../models/{}/model{}_epoch0".format(args.exp_id,args.ind_id))
 

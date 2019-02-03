@@ -153,8 +153,9 @@ class ArgReader():
         self.parser.add_argument('--alt_epoch_nb', type=int,metavar='TM',
                     help='The number of epoch during which train each parameter. Ignored if using \'joint\' training mode.')
 
-        self.parser.add_argument('--perc_noise', type=float,metavar='S',
-                        help='For \'init_oracle\' initialisation mode, the norm of the gaussian noise added to params, relative to their norm.')
+        self.parser.add_argument('--noise', type=float, metavar='NOISE',
+                    help='the amount of noise to add in the gradient of the model (as a percentage of the norm)(default: 0.1)')
+
         self.parser.add_argument('--prior', type=str,metavar='S',\
                         help='The prior to use. Can be \'uniform\' or \'oracle\'.')
         self.parser.add_argument('--prior_weight', type=float,metavar='S',\
