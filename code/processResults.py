@@ -76,7 +76,10 @@ def readConfFile(path,keyList):
     conf = conf["default"]
     resList = []
     for key in keyList:
-        resList.append(conf[key])
+        try:
+            resList.append(conf[key])
+        except KeyError:
+            pass
 
     return resList
 
@@ -180,21 +183,33 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParam):
     fig.legend(loc='right')
     plt.savefig("../vis/{}/convSpeed.png".format(exp_id))
 
-def distHeatMap(exp_id,params,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=100):
+def lookInModelAndData(modelConfigPath,key):
+
+    if key != "nb_videos":
+        res = readConfFile(modelConfigPath,[key])
+        if len(res) == 0:
+            datasetName = readConfFile(modelConfigPath,["dataset"])[0]
+            value = readConfFile("../data/{}.ini".format(datasetName),[key])[0]
+            return float(value)
+        else:
+            return float(res[0])
+    else:
+        datasetName = readConfFile(modelConfigPath,["dataset"])[0]
+        nb_content,nb_video_per_content = readConfFile("../data/{}.ini".format(datasetName),["nb_content","nb_video_per_content"])
+        return int(nb_content)*int(nb_video_per_content)
+
+def distHeatMap(exp_id,params,param1,param2,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=100):
 
     configFiles = sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)
 
     colors = cm.plasma(np.linspace(0, 1,nbStep))
 
-
     for i,configFile in enumerate(configFiles):
 
-        datasetName = readConfFile(configFile,["dataset"])[0]
-        #print("../data/{}.ini".format(datasetName))
-        nb_annot,nb_video_per_content,nb_content = readConfFile("../data/{}.ini".format(datasetName),["nb_annot","nb_video_per_content","nb_content"])
+        param1Value = lookInModelAndData(configFile,param1)
+        param2Value = lookInModelAndData(configFile,param2)
 
         distFilePath = "../results/{}/model{}_dist.csv".format(exp_id,findNumbers(os.path.basename(configFile)))
-
         distFile = np.genfromtxt(distFilePath,delimiter=",",dtype=str)
         header = distFile[0]
         distFile = distFile[1:].astype(float) + 1e-9
@@ -203,13 +218,13 @@ def distHeatMap(exp_id,params,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=100):
 
             if header[j] in params:
                 plt.figure(j)
-                plt.xlabel("Number of annotators")
-                plt.ylabel("Number of videos")
+                plt.xlabel(param1)
+                plt.ylabel(param2)
 
                 neg_log_dist = -np.log10(distFile[-nbEpochsMean:,j].mean())
                 color = colors[int(nbStep*neg_log_dist/maxLog)]
 
-                plt.scatter(int(nb_annot),int(nb_video_per_content)*int(nb_content),color=color,s=100)
+                plt.scatter(float(param1Value),float(param2Value),color=color,s=100)
 
                 if i==len(configFiles)-1:
                     plt.savefig("../vis/{}/distHeatMap_{}.png".format(exp_id,header[j]))
@@ -1004,7 +1019,7 @@ def main(argv=None):
                                     The first argument value is the id of the model to plot and the second is the start epoch.')
 
     argreader.parser.add_argument('--dist_heatmap',type=str,nargs="*",help='To plot the average distance travelled by parameters at the end of training for each model. The value of this argument is a list\
-                                    of parameters to plot.')
+                                    of parameters to plot and the two last value are the parameters to plot.')
 
     argreader.parser.add_argument('--conv_speed',type=str,metavar='ID',help='To plot the error as a function of the number of annotator. The value is the name of the parameter varying between \
                                     the reference models.')
@@ -1091,7 +1106,7 @@ def main(argv=None):
         twoDimRepr(args.exp_id,args.two_dim_repr[0],args.two_dim_repr[1])
 
     if args.dist_heatmap:
-        distHeatMap(args.exp_id,args.dist_heatmap)
+        distHeatMap(args.exp_id,args.dist_heatmap[:-2],param1=args.dist_heatmap[-2],param2=args.dist_heatmap[-1])
 
     if args.conv_speed:
 
