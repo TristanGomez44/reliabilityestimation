@@ -23,14 +23,23 @@ import os
 class MLE(nn.Module):
     ''' Implement the model proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
 
-    def __init__(self,videoNb,contentNb,annotNb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var):
+    def __init__(self,videoNb,contentNb,annotNb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,\
+                nbFreezTrueScores,nbFreezBias,nbFreezDiffs,nbFreezIncons):
 
         super(MLE, self).__init__()
 
-        self.bias  = nn.Parameter(torch.ones(annotNb))
-        self.incons  = nn.Parameter(torch.ones(annotNb))
-        self.diffs  = nn.Parameter(torch.ones(contentNb,polyDeg+1))
-        self.trueScores  = nn.Parameter(torch.ones(videoNb))
+        self.nbOptiDict = {"trueScores":nbFreezTrueScores,"bias":nbFreezBias,"diffs":nbFreezDiffs,"incons":nbFreezIncons}
+
+        self.bias_opti  = nn.Parameter(torch.ones(annotNb-nbFreezBias))
+        self.incons_opti  = nn.Parameter(torch.ones(annotNb-nbFreezIncons))
+        self.diffs_opti  = nn.Parameter(torch.ones(contentNb-nbFreezDiffs,polyDeg+1))
+        self.trueScores_opti  = nn.Parameter(torch.ones(videoNb-nbFreezTrueScores))
+
+        self.bias_freez = torch.ones(nbFreezBias)
+        self.incons_freez = torch.ones(nbFreezIncons)
+        self.diffs_freez = torch.ones(nbFreezDiffs,polyDeg+1)
+        self.trueScores_freez = torch.ones(nbFreezTrueScores)
+
         self.annotNb = annotNb
         self.videoNb = videoNb
         self.contentNb = contentNb
@@ -49,6 +58,11 @@ class MLE(nn.Module):
         self.paramProc = None
 
     def forward(self,xInt):
+
+        self.bias  = torch.cat((self.bias_freez,self.bias_opti),dim=0)
+        self.incons  = torch.cat((self.incons_freez,self.incons_opti),dim=0)
+        self.diffs = torch.cat((self.diffs_freez,self.diffs_opti),dim=0)
+        self.trueScores = torch.cat((self.trueScores_freez,self.trueScores_opti),dim=0)
 
         x = xInt.float()
         scoresDis = self.compScoreDis(x.is_cuda)
@@ -171,8 +185,9 @@ class MLE(nn.Module):
 
     def init(self,dataInt,datasetName,score_dis,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init):
 
-        self.init_base(dataInt)
+        #self.init_base(dataInt)
         paramNameList = list(self.state_dict().keys())
+        paramNameList = list(map(lambda x:x.replace("_opti",""),paramNameList))
 
         #if the list of parameters not to set at ground truth iis long as the number of parameters
         #it means that all parameters will be initialised with aproximation
@@ -185,7 +200,11 @@ class MLE(nn.Module):
 
             for key in paramNameList:
 
-                tensor = torch.tensor(gtParamDict[key]).view(getattr(self,key).size()).float()
+                firstDimSize = getattr(self,key+"_freez").size(0)+getattr(self,key+"_opti").size(0)
+                if len(getattr(self,key+"_freez").size()) == 1:
+                    tensor = torch.tensor(gtParamDict[key]).view(firstDimSize).float()
+                else:
+                    tensor = torch.tensor(gtParamDict[key]).view(firstDimSize,getattr(self,key+"_freez").size(1)).float()
 
                 oriSize = tensor.size()
                 tensor = tensor.view(-1)
@@ -195,7 +214,13 @@ class MLE(nn.Module):
                 if (key == "incons" or key == "diffs") and score_dis=="Beta":
                     tensor = torch.log(tensor/(1-tensor))
 
-                setattr(self,key,nn.Parameter(tensor))
+                setattr(self,key+"_freez",tensor[:self.nbOptiDict[key]])
+                setattr(self,key+"_opti",nn.Parameter(tensor[self.nbOptiDict[key]:]))
+                setattr(self,key,torch.cat((getattr(self,key+"_freez"),getattr(self,key+"_opti")),dim=0))
+
+        self.incons  = torch.cat((self.incons_freez,self.incons_opti),dim=0)
+        self.diffs = torch.cat((self.diffs_freez,self.diffs_opti),dim=0)
+        self.trueScores = torch.cat((self.trueScores_freez,self.trueScores_opti),dim=0)
 
         functionNameDict = {'bias':bias_init,'trueScores':true_scores_init,'diffs':diffs_init,'incons':incons_init}
 
@@ -205,9 +230,11 @@ class MLE(nn.Module):
 
             tensor = initFunc(dataInt)
             if (key == "incons" or key == "diffs") and score_dis=="Beta":
-                #print(tensor)
                 tensor = torch.log(tensor/(1-tensor))
-            setattr(self,key,nn.Parameter(tensor))
+
+            setattr(self,key+"_freez",tensor[:self.nbOptiDict[key]])
+            setattr(self,key+"_opti",nn.Parameter(tensor[self.nbOptiDict[key]:]))
+            setattr(self,key,torch.cat((getattr(self,key+"_freez"),getattr(self,key+"_opti")),dim=0))
 
     def tsInitBase(self,dataInt):
         return dataInt.float().mean(dim=1)
@@ -446,7 +473,8 @@ def MOS(dataInt,z_score,sub_rej):
 
     return mos_mean.numpy(),mos_conf.numpy()
 
-def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var):
+def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,\
+               nbFreezTrueScores,nbFreezBias,nbFreezDiffs,nbFreezIncons):
     '''Build a model
     Args:
         annot_nb (int): the bumber of annotators
@@ -456,12 +484,12 @@ def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_
         the built model
     '''
 
-    model = MLE(nbVideos,len(distorNbList),annot_nb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var)
+    model = MLE(nbVideos,len(distorNbList),annot_nb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,\
+                nbFreezTrueScores,nbFreezBias,nbFreezDiffs,nbFreezIncons)
     return model
 
 if __name__ == '__main__':
 
     mle = MLE(192,24,28)
 
-    #mle.setParams(torch.rand(28),torch.rand(28),torch.rand(24),torch.rand(192))
     mle(torch.ones((192,28)))
