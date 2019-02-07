@@ -58,11 +58,16 @@ class GradNoise():
 
 def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
 
-    confInterList = processResults.computeConfInter(loss,model)
+    #confInterList = processResults.computeConfInter(loss,model)
     keys = list(model.state_dict().keys())
     keys = list(map(lambda x:x.replace("_opti",""),keys))
 
-    for i,tensor in enumerate(model.parameters()):
+    for i,key in enumerate(keys):
+        tensor = torch.cat((getattr(model,key+"_freez"),getattr(model,key+"_opti")),dim=0)
+
+        confInterv_freez = processResults.computeConfInter(loss,getattr(model,key+"_freez"))
+        confInterv_opti = processResults.computeConfInter(loss,getattr(model,key+"_opti"))
+        confInterv = torch.cat((confInterv_freez,confInterv_opti),dim=0).cpu().detach().numpy().reshape(-1)[:,np.newaxis]
 
         if model.score_dis == "Beta":
             if (keys[i] =="diffs" or keys[i]=="incons"):
@@ -73,7 +78,6 @@ def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
 
         tensor = tensor.cpu().detach().numpy().reshape(-1)[:,np.newaxis]
 
-        confInterv = confInterList[i].cpu().detach().numpy().reshape(-1)[:,np.newaxis]
         concat = np.concatenate((tensor,confInterv),axis=1)
         np.savetxt("../results/{}/model{}_epoch{}_{}.csv".format(exp_id,ind_id,epoch,keys[i]),concat,delimiter="\t")
 
@@ -164,20 +168,10 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
         def closure():
             optimizer.zero_grad()
             loss = model(data)
-            loss.backward()
+            loss.backward(retain_graph=True)
             return loss
         optimizer.step(closure)
         optimizer.zero_grad()
-    elif args.optim == "NEWTON":
-
-        hessDiagList,gradientList = computeHessDiagList(loss,model)
-
-        annot_bias = model.annot_bias-lr*gradientList[0]/hessDiagList[0]
-        annot_incons = model.annot_incons-lr*gradientList[1]/hessDiagList[1]
-        video_amb = model.video_amb-lr*gradientList[2]/hessDiagList[2]
-        video_scor = model.video_scor-lr*gradientList[3]/hessDiagList[3]
-
-        model.setParams(annot_bias,annot_incons,video_amb,video_scor)
 
     else:
 
@@ -195,18 +189,6 @@ def computeHessDiag(loss,tensor):
     for i,first_deriv in enumerate(gradient):
         hessDiag[i] = grad(first_deriv, tensor, create_graph=True)[0][i]
     return hessDiag,gradient
-
-def computeHessDiagList(loss, model):
-
-    hessDiagList = []
-    gradientList = []
-    for tensor in model.parameters():
-
-        hessDiag,gradient = computeHessDiag(loss,tensor)
-        hessDiagList.append(hessDiag)
-        gradientList.append(gradient)
-
-    return hessDiagList,gradientList
 
 def get_OptimConstructor(optimStr,momentum):
     '''Return the apropriate constructor and keyword dictionnary for the choosen optimiser
