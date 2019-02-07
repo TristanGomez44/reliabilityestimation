@@ -35,10 +35,10 @@ class MLE(nn.Module):
         self.diffs_opti  = nn.Parameter(torch.ones(contentNb-nbFreezDiffs,polyDeg+1))
         self.trueScores_opti  = nn.Parameter(torch.ones(videoNb-nbFreezTrueScores))
 
-        self.bias_freez = torch.ones(nbFreezBias)
-        self.incons_freez = torch.ones(nbFreezIncons)
-        self.diffs_freez = torch.ones(nbFreezDiffs,polyDeg+1)
-        self.trueScores_freez = torch.ones(nbFreezTrueScores)
+        self.bias_freez = torch.Tensor.requires_grad_(torch.ones((nbFreezBias)))
+        self.incons_freez = torch.Tensor.requires_grad_(torch.ones((nbFreezIncons)))
+        self.diffs_freez = torch.Tensor.requires_grad_(torch.ones((nbFreezDiffs,polyDeg+1)))
+        self.trueScores_freez = torch.Tensor.requires_grad_(torch.ones((nbFreezTrueScores)))
 
         self.annotNb = annotNb
         self.videoNb = videoNb
@@ -89,11 +89,6 @@ class MLE(nn.Module):
             alpha,beta = generateData.meanvar_to_alphabeta(scor_bias,amb_incon/self.div_beta_var)
 
             scoresDis = Beta(alpha.unsqueeze(2),beta.unsqueeze(2))
-
-            for i in range(scor_bias.size(0)):
-                for j in range(scor_bias.size(1)):
-                    if scor_bias[i,j]>1 or scor_bias[i,j]<0:
-                        print(i,j,scor_bias[i,j])
 
         elif self.score_dis == "Normal":
             scoresDis = Normal(scor_bias.unsqueeze(2),amb_incon.unsqueeze(2))
@@ -214,7 +209,7 @@ class MLE(nn.Module):
                 if (key == "incons" or key == "diffs") and score_dis=="Beta":
                     tensor = torch.log(tensor/(1-tensor))
 
-                setattr(self,key+"_freez",tensor[:self.nbOptiDict[key]])
+                setattr(self,key+"_freez",torch.Tensor.requires_grad_(tensor[:self.nbOptiDict[key]]))
                 setattr(self,key+"_opti",nn.Parameter(tensor[self.nbOptiDict[key]:]))
                 setattr(self,key,torch.cat((getattr(self,key+"_freez"),getattr(self,key+"_opti")),dim=0))
 
@@ -232,7 +227,7 @@ class MLE(nn.Module):
             if (key == "incons" or key == "diffs") and score_dis=="Beta":
                 tensor = torch.log(tensor/(1-tensor))
 
-            setattr(self,key+"_freez",tensor[:self.nbOptiDict[key]])
+            setattr(self,key+"_freez",torch.Tensor.requires_grad_(tensor[:self.nbOptiDict[key]]))
             setattr(self,key+"_opti",nn.Parameter(tensor[self.nbOptiDict[key]:]))
             setattr(self,key,torch.cat((getattr(self,key+"_freez"),getattr(self,key+"_opti")),dim=0))
 
@@ -289,7 +284,8 @@ class MLE(nn.Module):
 
     def oraclePrior(self,loss):
         for param in self.disDict.keys():
-            loss -= self.disDict[param].log_prob(getattr(self,param)).sum()
+            procFunc = self.paramProc[param]
+            loss -= self.disDict[param].log_prob(procFunc(getattr(self,param+"_opti"))).sum()
 
         return loss
 
