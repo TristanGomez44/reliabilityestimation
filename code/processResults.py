@@ -59,15 +59,13 @@ def agregate(pairList):
 
     return nbAnnotAgreg,ymeans,yerr
 
-def baseLineError(datasetName,baseLineRefDict):
+def baseLineError(datasetName,baseLineRefDict,baselineName):
     dataset,_ = load_data.loadData(datasetName)
-    baseDict,_ = computeBaselines(dataset)
+    baseline,_ = computeBaselines(dataset,baselineName)
 
-    errDict = {}
-    for key in baseLineRefDict.keys():
-        errDict[key] = np.sqrt(np.power(baseDict[key]-baseLineRefDict[key],2).sum()/len(baseLineRefDict[key]))
+    error = np.sqrt(np.power(baseline-baseLineRefDict[baselineName],2).sum()/len(baseLineRefDict[baselineName]))
 
-    return errDict
+    return error
 
 def readConfFile(path,keyList):
 
@@ -83,22 +81,31 @@ def readConfFile(path,keyList):
 
     return resList
 
-def convSpeed(exp_id,refModelIdList,refModelSeedList,varParam):
+def convSpeed(exp_id,refModelIdList,refModelSeedList,varParamList):
 
     modelConfigPaths = sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)
     modelIds = list(map(lambda x:findNumbers(os.path.basename(x)),modelConfigPaths))
+
+    baselinesTypes = ['mos','sr_mos','zs_sr_mos']
 
     #Collect the scores of each reference model
     refTrueScoresDict = {}
     allBaseDict = {}
     for j,refModelId in enumerate(refModelIdList):
-
         refTrueScoresPath = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,refModelId)),key=findNumbers)[-1]
         refTrueScores = np.genfromtxt(refTrueScoresPath,delimiter="\t")[:,0]
 
-        datasetName,paramValue = readConfFile("../models/{}/model{}.ini".format(exp_id,refModelId),["dataset",varParam])
+        datasetName = readConfFile("../models/{}/model{}.ini".format(exp_id,refModelId),["dataset"])[0]
+
+        paramValue = ''
+        for varParam in varParamList:
+            paramValue += lookInModelAndData("../models/{}/model{}.ini".format(exp_id,refModelId),varParam,typeVal=str)
+        #print(paramValue)
         dataset,_ = load_data.loadData(datasetName)
-        baseLineRefDict,_ = computeBaselines(dataset)
+        #print(datasetName,paramValue)
+        baseLineRefDict = {}
+        for baselineType in baselinesTypes:
+            baseLineRefDict[baselineType],_ = computeBaselines(dataset,baselineType)
 
         #Get the color for each baseline
         baseColMaps = cm.Blues(np.linspace(0, 1,int(1.5*len(baseLineRefDict.keys()))))
@@ -110,15 +117,18 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParam):
         if not paramValue in refTrueScoresDict.keys():
             refTrueScoresDict[paramValue] = {}
         refTrueScoresDict[paramValue][refModelSeedList[j]] = refTrueScores
-        allBaseDict[paramValue] = baseLineRefDict
+
+        if not refModelSeedList[j] in allBaseDict.keys():
+            allBaseDict[refModelSeedList[j]] = baseLineRefDict
+        #allBaseDict[refModelSeedList[j]] =
 
     errorArray = np.zeros(len(modelConfigPaths))
     nbAnnotArray = np.zeros(len(modelConfigPaths))
 
     #Store the error of each baseline method
-    errorArrayDict = {}
-    for key in baseLineRefDict:
-        errorArrayDict[key] = np.zeros(len(modelConfigPaths))
+    allErrorBaseDict = {}
+    #for key in baseLineRefDict:
+    #    errorArrayDict[key] = np.zeros(len(modelConfigPaths))
 
     paramValueList = []
     colorInds = []
@@ -128,7 +138,11 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParam):
     baseDict = {}
     for i,modelPath in enumerate(modelConfigPaths):
 
-        datasetName,modelId,paramValue = readConfFile(modelPath,["dataset","ind_id",varParam])
+        datasetName,modelId = readConfFile(modelPath,["dataset","ind_id"])
+
+        paramValue = ''
+        for varParam in varParamList:
+            paramValue += lookInModelAndData(modelPath,varParam,typeVal=str)
 
         if not paramValue in paramValueList:
             paramValueList.append(paramValue)
@@ -139,66 +153,79 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParam):
 
         trueScoresPath = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,modelId)),key=findNumbers)[-1]
         trueScores = np.genfromtxt(trueScoresPath,delimiter="\t")[:,0]
-
         error = np.sqrt(np.power(trueScores-refTrueScoresDict[paramValue][int(seed)],2).sum()/len(refTrueScoresDict[paramValue][int(seed)]))
-
-        #Computing the baseline error relative to the right baseline
-        errDict = baseLineError(datasetName,allBaseDict[paramValue])
-        for key in errorArrayDict:
-            errorArrayDict[key][i] = errDict[key]
 
         if not paramValue in valuesDict.keys():
             valuesDict[paramValue] = [(error,nbAnnot)]
-            baseDict[paramValue] = {}
-            for key in errDict.keys():
-                baseDict[paramValue][key] = [(errDict[key],nbAnnot)]
         else:
             valuesDict[paramValue].append((error,nbAnnot))
-            for key in errDict.keys():
-                baseDict[paramValue][key].append((errDict[key],nbAnnot))
+
+        for baselineType in baselinesTypes:
+
+            if not baselineType in allErrorBaseDict.keys():
+                allErrorBaseDict[baselineType] = {}
+
+            if not nbAnnot in allErrorBaseDict[baselineType].keys():
+                allErrorBaseDict[baselineType][nbAnnot] = {}
+
+            if not int(seed) in allErrorBaseDict[baselineType][nbAnnot].keys():
+                #Computing the baseline error relative to the right baseline
+                error = baseLineError(datasetName,allBaseDict[int(seed)],baselineType)
+                #print(baselineType,nbAnnot,int(seed))
+                allErrorBaseDict[baselineType][nbAnnot][int(seed)] = error
 
     colors = cm.autumn(np.linspace(0, 1,len(paramValueList)))
     markers = [m for m, func in Line2D.markers.items() if func != 'nothing' and m not in Line2D.filled_markers]
     paramValueList = list(map(lambda x:paramValueList[x],colorInds))
 
-    fig = plt.figure(figsize=(7,5))
+    fig = plt.figure(figsize=(10,5))
     ax = fig.add_subplot(111)
     box = ax.get_position()
-    ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+    ax.set_position([box.x0, box.y0, box.width * 0.6, box.height])
 
     plt.xlabel("Nb of annotators")
     plt.ylabel("RMSE")
 
+    #Plot the models
     for i,paramValue in enumerate(valuesDict.keys()):
-
-        #Plot the model
         nbAnnotAgreg,ymeans,yerr = agregate(valuesDict[paramValue])
-        plt.errorbar(nbAnnotAgreg,ymeans,yerr=yerr,color=colors[i],label=paramValue,marker=markers[i])
+        plt.errorbar(np.array(nbAnnotAgreg,dtype=str).astype(int)+0.25*i,ymeans,yerr=yerr,color=colors[i],label=paramValue,marker=markers[i])
 
-        #Plot the baselines
-        for j,key in enumerate(baseDict[paramValue]):
-            nbAnnotAgreg,ymeans,yerr=agregate(baseDict[paramValue][key])
-            plt.errorbar(nbAnnotAgreg,ymeans,yerr=yerr,color=baseColMapsDict[key],marker=markers[i],label=paramValue+","+key)
+    #Plot the baselines
+    for baseline in allErrorBaseDict.keys():
+
+        means = np.zeros(len(allErrorBaseDict[baseline].keys()))
+        stds = np.zeros(len(allErrorBaseDict[baseline].keys()))
+        annotNbs = np.zeros(len(allErrorBaseDict[baseline].keys()))
+        for i,annotNb in enumerate(allErrorBaseDict[baseline].keys()):
+            valToAgr = np.array([allErrorBaseDict[baseline][annotNb][seed] for seed in allErrorBaseDict[baseline][annotNb].keys()])
+            means[i],stds[i] = valToAgr.mean(),valToAgr.std()
+            annotNbs[i] = annotNb
+
+        #annotNbs = annotNbs.astype(int).astype(str)
+        means,stds,annotNbs = zip(*sorted(zip(means,stds,annotNbs),key=lambda x:x[2]))
+
+        plt.errorbar(annotNbs,means,yerr=stds,color=baseColMapsDict[baseline],label=baseline)
 
     fig.legend(loc='right')
     plt.savefig("../vis/{}/convSpeed.png".format(exp_id))
 
-def lookInModelAndData(modelConfigPath,key):
+def lookInModelAndData(modelConfigPath,key,typeVal=float):
 
     if key != "nb_videos":
         res = readConfFile(modelConfigPath,[key])
         if len(res) == 0:
             datasetName = readConfFile(modelConfigPath,["dataset"])[0]
             value = readConfFile("../data/{}.ini".format(datasetName),[key])[0]
-            return float(value)
+            return typeVal(value)
         else:
-            return float(res[0])
+            return typeVal(res[0])
     else:
         datasetName = readConfFile(modelConfigPath,["dataset"])[0]
         nb_content,nb_video_per_content = readConfFile("../data/{}.ini".format(datasetName),["nb_content","nb_video_per_content"])
         return int(nb_content)*int(nb_video_per_content)
 
-def distHeatMap(exp_id,params,param1,param2,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=100):
+def distHeatMap(exp_id,params,param1,param2,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=10):
 
     configFiles = sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)
 
@@ -224,7 +251,7 @@ def distHeatMap(exp_id,params,param1,param2,minLog=0,maxLog=10,nbStep=100,nbEpoc
                 neg_log_dist = -np.log10(distFile[-nbEpochsMean:,j].mean())
                 color = colors[int(nbStep*neg_log_dist/maxLog)]
 
-                plt.scatter(float(param1Value),float(param2Value),color=color,s=100)
+                plt.scatter(float(param1Value),float(param2Value),color=color,s=400)
 
                 if i==len(configFiles)-1:
                     plt.savefig("../vis/{}/distHeatMap_{}.png".format(exp_id,header[j]))
@@ -242,15 +269,13 @@ def plot_points_arrows(repres,filePath,alphas,colors):
 
     plt.savefig(filePath)
 
-def twoDimRepr(exp_id,model_id,start_epoch):
+def twoDimRepr(exp_id,model_id,start_epoch,paramPlot):
 
     def getEpoch(path):
         return findNumbers(os.path.basename(path).replace("model{}".format(model_id),""))
 
-    for key in paramKeys:
+    for key in paramPlot:
         paramFiles = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,model_id,key)),key=findNumbers)
-
-
 
         paramFiles = list(filter(lambda x:getEpoch(x)>start_epoch,paramFiles))
         colors = cm.plasma(np.linspace(0, 1,len(paramFiles)))
@@ -310,24 +335,32 @@ def plotDistNLL(exp_id,ind_list):
 
     plt.savefig("../vis/{}/dist_nll_{}.png".format(exp_id,ind_list))
 
-def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
+def distrPlot(exp_id,indModel,plotScoreDis,nbPlot=10,dx=0.01):
 
     modelConf = configparser.ConfigParser()
     modelConf.read("../models/{}/model{}.ini".format(exp_id,indModel))
     modelConf = modelConf['default']
 
-    xInt,distorNbList = load_data.loadData(dataset)
+    datasetName = readConfFile("../models/{}/model{}.ini".format(exp_id,indModel),["dataset"])[0]
+
+    xInt,distorNbList = load_data.loadData(datasetName)
 
     #Building the model
     model = modelBuilder.modelMaker(xInt.size(1),len(xInt),distorNbList,int(modelConf["poly_deg"]),modelConf["score_dis"],\
-                                    int(modelConf["score_min"]),int(modelConf["score_max"]),float(modelConf["div_beta_var"]))
+                                    int(modelConf["score_min"]),int(modelConf["score_max"]),float(modelConf["div_beta_var"]), \
+                                    int(modelConf["nb_freez_truescores"]),int(modelConf["nb_freez_bias"]),int(modelConf["nb_freez_diffs"]),\
+                                    int(modelConf["nb_freez_incons"]))
 
     paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)))
 
-    tensorDict = {"bias":np.zeros((len(paramsPaths),getattr(model,"bias").size(0))),\
-                  "incons":np.zeros((len(paramsPaths),getattr(model,"incons").size(0))),\
-                  "diffs":np.zeros((len(paramsPaths),getattr(model,"diffs").size(0))),\
-                  "trueScores":np.zeros((len(paramsPaths),getattr(model,"trueScores").size(0)))}
+
+    print("../data/{}.ini".format(exp_id,datasetName))
+    nb_annot,nb_content,nb_video_per_content = readConfFile("../data/{}.ini".format(datasetName),["nb_annot","nb_content","nb_video_per_content"])
+
+    tensorDict = {"bias":np.zeros((len(paramsPaths),int(nb_annot))),\
+                  "incons":np.zeros((len(paramsPaths),int(nb_annot))),\
+                  "diffs":np.zeros((len(paramsPaths),int(nb_content))),\
+                  "trueScores":np.zeros((len(paramsPaths),int(nb_video_per_content)*int(nb_content)))}
 
     indexs = np.random.choice(range(xInt.size(1)),size=nbPlot)
     vidIndex = np.random.choice(range(xInt.size(0)),size=1)[0]
@@ -410,7 +443,7 @@ def distrPlot(dataset,exp_id,indModel,plotScoreDis=False,nbPlot=10,dx=0.01):
             subplot = plt.subplot(2,1,1)
             subplot.set_xlim(xRangeDict[key])
             subplot.set_ylim(0,len(tensorDict[key][j])*0.5)
-            subplot.hist(np.genfromtxt("../data/{}_{}.csv".format(dataset,key)),range=xRangeDict[key],color="red")
+            subplot.hist(np.genfromtxt("../data/{}_{}.csv".format(datasetName,key)),range=xRangeDict[key],color="red")
 
             #Plot predicted distribution
             subplot = plt.subplot(2,1,2)
@@ -591,7 +624,7 @@ def mean_std_plot(data,distorNbList,dataset,exp_id,model):
         #Plotting the polynomial modeling the dependency between video mean score and video std score deviation
         coeffs = model.video_amb[i].cpu().detach().numpy()
         plt.plot(x, PolyCoefficients(x, coeffs),color=colors[i])
-        #print(coeffs)
+
     plt.xlim([1, 5])
     plt.ylim([0,max(stds)*1.2])
 
@@ -622,15 +655,16 @@ def std(data,distorNbList,dataset):
 
     plt.savefig("../vis/stds_{}.png".format(dataset))
 
-def computeBaselines(trainSet):
-    mos_mean,mos_std = modelBuilder.MOS(trainSet,sub_rej=False,z_score=False)
-    sr_mos_mean,sr_mos_std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=False)
-    zs_sr_mos_mean,zs_sr_mos_std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=True)
+def computeBaselines(trainSet,baselineName):
 
-    meanDict = {"mos":mos_mean,"sr_mos":sr_mos_mean,"zs_sr_mos":zs_sr_mos_mean}
-    stdDict = {"mos":mos_std,"sr_mos":sr_mos_std,"zs_sr_mos":zs_sr_mos_std}
+    if baselineName == "mos":
+        mean,std = modelBuilder.MOS(trainSet,sub_rej=False,z_score=False)
+    elif baselineName == "sr_mos":
+        mean,std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=False)
+    elif baselineName == "zs_sr_mos":
+        mean,std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=True)
 
-    return meanDict,stdDict
+    return mean,std
 
 def mean_std(model,loss):
     mle_mean = model.video_scor
@@ -726,18 +760,13 @@ def robustness(model,trainSet,distorNbList,args,paramValues,paramName,corrKwargs
 
     plt.savefig("../vis/{}/robustness_epoch{}_model{}.png".format(args.exp_id,args.epochs,args.ind_id))
 
-def computeConfInter(loss,model):
+def computeConfInter(loss,tensor):
 
-    hessDiagList,gradList = train_val.computeHessDiagList(loss,model)
-    confInterList = []
+    hessDiag,grad = train_val.computeHessDiag(loss,tensor)
 
-    for hessDiag in hessDiagList:
+    confInter = 1.96/torch.sqrt(hessDiag)
 
-        #print(hessDiag)
-        confInter = 1.96/torch.sqrt(hessDiag)
-        confInterList.append(confInter)
-
-    return confInterList
+    return confInter
 
 def plotMLE(lossList,modelList,modelNameList,exp_id,dataset=None,ind_id=None,mos_mean=None,mos_std=None):
 
@@ -825,7 +854,10 @@ def errorVec(vec,vec_ref,errFunc):
             vec_ref = vec_ref.cpu()
         vec_ref = vec_ref.detach().numpy()
 
-    return errFunc(vec,vec_ref)
+    if len(vec) != len(vec_ref):
+        return -1
+    else:
+        return errFunc(vec,vec_ref)
 
 def includPerc(dictPred,dictGT,paramNames):
 
@@ -838,9 +870,12 @@ def includPerc(dictPred,dictGT,paramNames):
 
 def includPercVec(mean,confIterv,gt):
 
-    includNb = ((mean - confIterv < gt)* (gt < mean + confIterv)).sum()
+    if len(mean) != len(gt):
+        return -1
+    else:
 
-    return includNb/len(mean)
+        includNb = ((mean - confIterv < gt)* (gt < mean + confIterv)).sum()
+        return includNb/len(mean)
 
 def extractParamName(path):
 
@@ -878,8 +913,9 @@ def compareWithGroundTruth(exp_id,varParams,error_metric):
 
         dataset_id = readConfFile(modelConfigPaths[i],["dataset"])[0]
 
-        paramValue = ",".join(readConfFile(modelConfigPaths[i],varParams))
-        #print(modelInd)
+        paramValue = ''
+        for varParam in varParams:
+            paramValue += ","+lookInModelAndData(modelConfigPaths[i],varParam,typeVal=str)
 
         #Get the ground truth of the dataset on which this model has been trained
         gtParamDict = getGT(dataset_id,allGtParamDict,paramKeys)
@@ -924,7 +960,9 @@ def agregateCpWGroundTruth(exp_id,resFilePath):
     mean = np.zeros((len(groupedLines.keys()),resFile.shape[1]-1))
     std =  np.zeros((len(groupedLines.keys()),resFile.shape[1]-1))
 
-    for i,key in enumerate(groupedLines.keys()):
+    keys = sorted(groupedLines.keys())
+
+    for i,key in enumerate(keys):
         groupedLines[key] = np.array(groupedLines[key])[:,1:].astype(float)
 
         mean[i] =  groupedLines[key].mean(axis=0)
@@ -961,16 +999,16 @@ def agregateCpWGroundTruth(exp_id,resFilePath):
 
 def ttest_matrix(groupedLines,exp_id,modelKeys,resFilePath):
 
-    keys = list(groupedLines.keys())
-    #print(keys)
+    keys = sorted(list(groupedLines.keys()))
+
     mat = np.zeros((len(keys),len(keys),len(modelKeys)))
 
     for i in range(len(keys)):
         for j in range(len(keys)):
             for k in range(len(modelKeys)):
-                #print(groupedLines[keys[i]][:,k],k)
+
                 _,mat[i,j,k] = scipy.stats.ttest_ind(groupedLines[keys[i]][:,k],groupedLines[keys[j]][:,k],equal_var=True)
-                #sys.exit(0)
+
     mat = mat.astype(str)
     for k in range(len(modelKeys)):
         csv = "\t"+"\t".join(keys)+"\n"
@@ -999,9 +1037,9 @@ def main(argv=None):
     argreader.parser.add_argument('--std_mean',action='store_true',help='To plot the std of score as function of mean score \
                                 with the parameters tuned to model this function')
     argreader.parser.add_argument('--comp_gt',type=str,nargs="*",metavar='PARAM',help='To compare the parameters found with the ground truth parameters. Require a fake dataset. The argument should\
-                                    be the name of the parameter varying across the different models in the experiment.')
+                                    be the list of parameters varying across the different models in the experiment.')
     argreader.parser.add_argument('--comp_gt_agr',type=str,nargs="*",metavar='PARAM',help='To compare the parameters found with the ground truth parameters. Require a fake dataset. The argument should\
-                                    be the name of the parameter varying across the different models in the experiment. The accuracies of models having the same value for those parameters will be agregated.')
+                                    be the list of parameters varying across the different models in the experiment. The accuracies of models having the same value for those parameters will be agregated.')
     argreader.parser.add_argument('--error_metric',type=str,metavar='ERROR',default="rmse",help='The error metric used in \'--comp_gt\' and \'--comp_gt_agr\'. Can be \'rmse\' or \'relative\'. Default is \'RMSE\'.')
 
     argreader.parser.add_argument('--artif_data',action='store_true',help='To plot the real and empirical distribution of the parameters of a fake dataset. \
@@ -1015,13 +1053,13 @@ def main(argv=None):
     argreader.parser.add_argument('--plot_dist_nll',type=int,nargs="*",help='To plot the distance travelled by each parameters and the negative log-likelihood at each epoch. \
                                     The argument values are the index of the models to plot.')
 
-    argreader.parser.add_argument('--two_dim_repr',type=int,nargs=2,help='To plot the t-sne visualisation of the values taken by the parameters during training. \
-                                    The first argument value is the id of the model to plot and the second is the start epoch.')
+    argreader.parser.add_argument('--two_dim_repr',type=str,nargs="*",help='To plot the t-sne visualisation of the values taken by the parameters during training. \
+                                    The first argument value is the id of the model to plot and the second is the start epoch. The following argument are the parameters to plot.')
 
     argreader.parser.add_argument('--dist_heatmap',type=str,nargs="*",help='To plot the average distance travelled by parameters at the end of training for each model. The value of this argument is a list\
                                     of parameters to plot and the two last value are the parameters to plot.')
 
-    argreader.parser.add_argument('--conv_speed',type=str,metavar='ID',help='To plot the error as a function of the number of annotator. The value is the name of the parameter varying between \
+    argreader.parser.add_argument('--conv_speed',type=str,nargs='*',metavar='ID',help='To plot the error as a function of the number of annotator. The value is a list of parameters varying between \
                                     the reference models.')
 
     #Reading the comand line arg
@@ -1088,10 +1126,10 @@ def main(argv=None):
         fakeDataDIstr(args)
 
     if args.distr_plot:
-        distrPlot(args.dataset,args.exp_id,args.distr_plot,plotScoreDis=True)
+        distrPlot(args.exp_id,args.distr_plot,plotScoreDis=True)
 
     if args.param_distr_plot:
-        distrPlot(args.dataset,args.exp_id,args.param_distr_plot,plotScoreDis=False)
+        distrPlot(args.exp_id,args.param_distr_plot,plotScoreDis=False)
 
     if args.scatter_plot:
         scatterPlot(args.dataset,args.exp_id,args.scatter_plot)
@@ -1103,7 +1141,7 @@ def main(argv=None):
         plotDistNLL(args.exp_id,args.plot_dist_nll)
 
     if args.two_dim_repr:
-        twoDimRepr(args.exp_id,args.two_dim_repr[0],args.two_dim_repr[1])
+        twoDimRepr(args.exp_id,int(args.two_dim_repr[0]),int(args.two_dim_repr[1]),args.two_dim_repr[2:])
 
     if args.dist_heatmap:
         distHeatMap(args.exp_id,args.dist_heatmap[:-2],param1=args.dist_heatmap[-2],param2=args.dist_heatmap[-1])
@@ -1126,6 +1164,8 @@ def main(argv=None):
 
         ids = np.array(ids)[argmaxs]
         seeds = np.array(seeds)[argmaxs]
+
+        ids,seeds = zip(*sorted(zip(ids,seeds),key=lambda x:x[0]))
 
         convSpeed(args.exp_id,ids,seeds,args.conv_speed)
 
