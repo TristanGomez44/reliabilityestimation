@@ -85,6 +85,7 @@ def addLossTerms(loss,model,weight,normSum,cuda):
     #print("Adding loss terms")
     #print(loss)
     if weight>0:
+
         loss = weight*model.prior(loss)
         #print(loss)
     if normSum:
@@ -339,7 +340,8 @@ def main(argv=None):
     #Building the model
     model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg,\
                                     args.score_dis,args.score_min,args.score_max,args.div_beta_var,\
-                                    args.nb_freez_truescores,args.nb_freez_bias,args.nb_freez_diffs,args.nb_freez_incons)
+                                    args.nb_freez_truescores,args.nb_freez_bias,args.nb_freez_diffs,args.nb_freez_incons,\
+                                    args.prior_update_frequ)
     if args.cuda:
         model = model.cuda()
 
