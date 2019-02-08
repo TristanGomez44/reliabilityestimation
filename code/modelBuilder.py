@@ -24,7 +24,7 @@ class MLE(nn.Module):
     ''' Implement the model proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
 
     def __init__(self,videoNb,contentNb,annotNb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,\
-                nbFreezTrueScores,nbFreezBias,nbFreezDiffs,nbFreezIncons):
+                nbFreezTrueScores,nbFreezBias,nbFreezDiffs,nbFreezIncons,priorUpdateFrequ):
 
         super(MLE, self).__init__()
 
@@ -54,10 +54,24 @@ class MLE(nn.Module):
         self.div_beta_var = div_beta_var
 
         self.prior = None
+        self.priorName = None
         self.disDict = None
         self.paramProc = None
 
+        self.priorUpdateCount = priorUpdateFrequ
+        self.priorUpdateFrequ = priorUpdateFrequ
+
     def forward(self,xInt):
+
+        if self.priorName == "empirical":
+            #print(self.priorUpdateCount)
+            if self.priorUpdateCount == self.priorUpdateFrequ:
+
+                self.updateEmpirical()
+
+                self.priorUpdateCount = 0
+            else:
+                self.priorUpdateCount += 1
 
         self.bias  = torch.cat((self.bias_freez,self.bias_opti),dim=0)
         self.incons  = torch.cat((self.incons_freez,self.incons_opti),dim=0)
@@ -279,6 +293,31 @@ class MLE(nn.Module):
 
         return res
 
+    def updateEmpirical(self):
+
+        self.bias  = torch.cat((self.bias_freez,self.bias_opti),dim=0)
+        self.incons  = torch.cat((self.incons_freez,self.incons_opti),dim=0)
+        self.diffs = torch.cat((self.diffs_freez,self.diffs_opti),dim=0)
+
+        for key in self.paramProc.keys():
+
+            if key == "bias":
+                self.disDict["bias"] = Normal(torch.zeros(1), np.power(getattr(self,key).std().detach().numpy(),2)*torch.eye(1))
+            else:
+
+                sigTensor = torch.sigmoid(getattr(self,key))
+                mean,var = sigTensor.mean(),torch.pow(sigTensor.std(),2)
+                alpha,beta = generateData.meanvar_to_alphabeta(mean,var)
+                self.disDict[key] = Beta(alpha, beta)
+
+    def empiricalPrior(self,loss):
+        #print("Adding prior term")
+        for param in self.disDict.keys():
+            procFunc = self.paramProc[param]
+            loss -= self.disDict[param].log_prob(procFunc(getattr(self,param+"_opti"))).sum()
+
+        return loss
+
     def unifPrior(self,loss):
         return loss
 
@@ -291,7 +330,17 @@ class MLE(nn.Module):
 
     def setPrior(self,priorName,dataset):
 
-        if priorName == "oracle":
+        self.priorName = priorName
+        if priorName == "empirical":
+            self.prior = self.empiricalPrior
+
+            self.disDict = {}
+
+            self.paramProc = {"diffs":lambda x:torch.sigmoid(x), \
+                             "incons":lambda x:torch.sigmoid(x),\
+                             "bias":lambda x:x}
+
+        elif priorName == "oracle":
             self.prior = self.oraclePrior
 
             self.disDict = {}
@@ -302,7 +351,7 @@ class MLE(nn.Module):
 
                 self.disDict = {"diffs":Beta(float(dataConf['diff_alpha']), float(dataConf["diff_beta"])), \
                                 "incons":Beta(float(dataConf["incons_alpha"]), float(dataConf["incons_beta"])),\
-                                "bias":Normal(torch.zeros(1), float(dataConf["bias_std"])*torch.eye(1))}
+                                "bias":Normal(torch.zeros(1), np.power(float(dataConf["bias_std"]),2)*torch.eye(1))}
 
                 self.paramProc = {"diffs":lambda x:torch.sigmoid(x), \
                                  "incons":lambda x:torch.sigmoid(x),\
@@ -470,7 +519,7 @@ def MOS(dataInt,z_score,sub_rej):
     return mos_mean.numpy(),mos_conf.numpy()
 
 def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,\
-               nbFreezTrueScores,nbFreezBias,nbFreezDiffs,nbFreezIncons):
+               nbFreezTrueScores,nbFreezBias,nbFreezDiffs,nbFreezIncons,priorUpdateFrequ):
     '''Build a model
     Args:
         annot_nb (int): the bumber of annotators
@@ -481,7 +530,7 @@ def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_
     '''
 
     model = MLE(nbVideos,len(distorNbList),annot_nb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,\
-                nbFreezTrueScores,nbFreezBias,nbFreezDiffs,nbFreezIncons)
+                nbFreezTrueScores,nbFreezBias,nbFreezDiffs,nbFreezIncons,priorUpdateFrequ)
     return model
 
 if __name__ == '__main__':

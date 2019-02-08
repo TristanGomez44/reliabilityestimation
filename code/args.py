@@ -194,6 +194,9 @@ class ArgReader():
                             help='The coefficient with which to rescale down the variances (difficulties and inconsistencies) \
                             sampled from the beta distribution')
 
+        self.parser.add_argument('--prior_update_frequ', type=int, metavar='S',
+                            help='The number of epoch to wait before updating the empirical prior. Ignored if other prior is used.')
+
         self.args = None
 
     def getRemainingArgs(self):
