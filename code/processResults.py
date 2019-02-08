@@ -189,7 +189,7 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParamList):
     #Plot the models
     for i,paramValue in enumerate(valuesDict.keys()):
         nbAnnotAgreg,ymeans,yerr = agregate(valuesDict[paramValue])
-        plt.errorbar(np.array(nbAnnotAgreg,dtype=str).astype(int)+0.25*i,ymeans,yerr=yerr,color=colors[i],label=paramValue,marker=markers[i])
+        plt.errorbar(np.array(nbAnnotAgreg,dtype=str).astype(int)+0.1*i,ymeans,yerr=yerr,color=colors[i],label=paramValue,marker=markers[i])
 
     #Plot the baselines
     for baseline in allErrorBaseDict.keys():
