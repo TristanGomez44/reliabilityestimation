@@ -32,6 +32,33 @@ from sklearn.decomposition import PCA
 
 paramKeys = ["bias","incons","diffs","trueScores"]
 
+def plotVideoRawScores(dataset,lineList,score_min,score_max):
+
+    lineList = np.array(lineList).astype(int)
+
+    lines = np.genfromtxt("../data/{}_scores.csv".format(dataset),dtype=str)[lineList]
+    lineNames = lines[:,1]
+    lines = lines[:,2:].astype(int)
+
+    width = 1
+    nb_lines = int(math.sqrt(len(lines)))
+
+    plt.figure()
+    #plt
+    plt.subplots_adjust(hspace=0.3)
+
+    for i,line in enumerate(lines):
+
+        subplot = plt.subplot(nb_lines,nb_lines,i+1)
+        bins = np.arange(score_min,score_max+1)-0.5*width
+
+        subplot.hist(line, score_max-score_min+1,color='black',range=(score_min,score_max+1))
+        subplot.set_xticks(np.arange(score_min,score_max+1)+0.5*width)
+        subplot.set_xticklabels(np.arange(score_min,score_max+1).astype(str))
+        subplot.set_title(lineNames[i])
+
+    plt.savefig("../vis/{}_scores.png".format(dataset))
+
 def agregate(pairList):
 
     nbAnnotAgreg = []
@@ -99,7 +126,7 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParamList):
 
         paramValue = ''
         for varParam in varParamList:
-            paramValue += lookInModelAndData("../models/{}/model{}.ini".format(exp_id,refModelId),varParam,typeVal=str)
+            paramValue += " "+lookInModelAndData("../models/{}/model{}.ini".format(exp_id,refModelId),varParam,typeVal=str)
         #print(paramValue)
         dataset,_ = load_data.loadData(datasetName)
         #print(datasetName,paramValue)
@@ -118,9 +145,10 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParamList):
             refTrueScoresDict[paramValue] = {}
         refTrueScoresDict[paramValue][refModelSeedList[j]] = refTrueScores
 
+
         if not refModelSeedList[j] in allBaseDict.keys():
             allBaseDict[refModelSeedList[j]] = baseLineRefDict
-        #allBaseDict[refModelSeedList[j]] =
+
 
     errorArray = np.zeros(len(modelConfigPaths))
     nbAnnotArray = np.zeros(len(modelConfigPaths))
@@ -142,7 +170,7 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParamList):
 
         paramValue = ''
         for varParam in varParamList:
-            paramValue += lookInModelAndData(modelPath,varParam,typeVal=str)
+            paramValue += " "+lookInModelAndData(modelPath,varParam,typeVal=str)
 
         if not paramValue in paramValueList:
             paramValueList.append(paramValue)
@@ -153,12 +181,14 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParamList):
 
         trueScoresPath = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,modelId)),key=findNumbers)[-1]
         trueScores = np.genfromtxt(trueScoresPath,delimiter="\t")[:,0]
+
         error = np.sqrt(np.power(trueScores-refTrueScoresDict[paramValue][int(seed)],2).sum()/len(refTrueScoresDict[paramValue][int(seed)]))
 
         if not paramValue in valuesDict.keys():
             valuesDict[paramValue] = [(error,nbAnnot)]
         else:
             valuesDict[paramValue].append((error,nbAnnot))
+
 
         for baselineType in baselinesTypes:
 
@@ -174,14 +204,15 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParamList):
                 #print(baselineType,nbAnnot,int(seed))
                 allErrorBaseDict[baselineType][nbAnnot][int(seed)] = error
 
+
     colors = cm.autumn(np.linspace(0, 1,len(paramValueList)))
     markers = [m for m, func in Line2D.markers.items() if func != 'nothing' and m not in Line2D.filled_markers]
     paramValueList = list(map(lambda x:paramValueList[x],colorInds))
 
-    fig = plt.figure(figsize=(10,5))
+    fig = plt.figure(figsize=(7,5))
     ax = fig.add_subplot(111)
     box = ax.get_position()
-    ax.set_position([box.x0, box.y0, box.width * 0.6, box.height])
+    ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
 
     plt.xlabel("Nb of annotators")
     plt.ylabel("RMSE")
@@ -189,7 +220,8 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParamList):
     #Plot the models
     for i,paramValue in enumerate(valuesDict.keys()):
         nbAnnotAgreg,ymeans,yerr = agregate(valuesDict[paramValue])
-        plt.errorbar(np.array(nbAnnotAgreg,dtype=str).astype(int)+0.1*i,ymeans,yerr=yerr,color=colors[i],label=paramValue,marker=markers[i])
+        plt.errorbar(np.array(nbAnnotAgreg,dtype=str).astype(int)+0.1*i,ymeans,yerr=yerr,label=paramValue,marker=markers[i])
+
 
     #Plot the baselines
     for baseline in allErrorBaseDict.keys():
@@ -206,9 +238,9 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParamList):
         means,stds,annotNbs = zip(*sorted(zip(means,stds,annotNbs),key=lambda x:x[2]))
 
         plt.errorbar(annotNbs,means,yerr=stds,color=baseColMapsDict[baseline],label=baseline)
-
+    
     fig.legend(loc='right')
-    plt.savefig("../vis/{}/convSpeed.png".format(exp_id))
+    plt.savefig("../vis/{}/convSpeed_{}.png".format(exp_id,exp_id))
 
 def lookInModelAndData(modelConfigPath,key,typeVal=float):
 
@@ -261,9 +293,9 @@ def plot_points_arrows(repres,filePath,alphas,colors):
 
     plt.figure()
 
-    for i,point in enumerate(repres):
-        if i<len(repres)-1:
-            plt.plot([repres[i,0],repres[i+1,0]],[repres[i,1],repres[i+1,1]],alpha=alphas[i], zorder=1,color="black")
+    #for i,point in enumerate(repres):
+    #    if i<len(repres)-1:
+    #        plt.plot([repres[i,0],repres[i+1,0]],[repres[i,1],repres[i+1,1]],alpha=alphas[i], zorder=1,color="black")
 
     plt.scatter(repres[:,0],repres[:,1],color=colors, zorder=2)
 
@@ -289,7 +321,7 @@ def twoDimRepr(exp_id,model_id,start_epoch,paramPlot):
         plot_points_arrows(repr_tsne,"../vis/{}/model{}_{}_tsne.png".format(exp_id,model_id,key),alphas,colors)
         plot_points_arrows(repr_pca,"../vis/{}/model{}_{}_pca.png".format(exp_id,model_id,key),alphas,colors)
 
-def plotDistNLL(exp_id,ind_list):
+def plotDistNLL(exp_id,ind_list,startEpoch,endEpoch):
 
     colors = cm.rainbow(np.linspace(0, 1, len(paramKeys)+1))
 
@@ -299,7 +331,7 @@ def plotDistNLL(exp_id,ind_list):
     else:
         markers = markers[:len(ind_list)]
 
-    fig = plt.figure(figsize=(60,5))
+    fig = plt.figure(figsize=(10,5))
     axDist = fig.add_subplot(111)
     axNLL = axDist.twinx()
 
@@ -315,7 +347,7 @@ def plotDistNLL(exp_id,ind_list):
 
         for j,key in enumerate(header):
             if key != "all":
-                axDist.plot(distArray[:,j],label="model{} {}".format(ind,key),color=colors[j],marker=markers[i],alpha=0.5)
+                axDist.plot(distArray[startEpoch:endEpoch,j],label="model{} {}".format(ind,key),color=colors[j],marker=markers[i],alpha=0.5)
 
         if os.path.exists("../results/{}/model{}_nll.csv".format(exp_id,ind)):
             llArray = -np.genfromtxt("../results/{}/model{}_nll.csv".format(exp_id,ind),delimiter=",",dtype=float)
@@ -324,10 +356,14 @@ def plotDistNLL(exp_id,ind_list):
                 minLL = llArray[-500:].min()
             if (maxLL is None or llArray[-100:].max() > maxNLl):
                 maxLL = llArray[-500:].max()
-            axNLL.plot(llArray,label="model{}".format(ind),color="black",marker=markers[i],alpha=0.5)
+            #axNLL.plot(llArray[startEpoch:endEpoch,j],label="model{}".format(ind),color="black",marker=markers[i],alpha=0.5)
+
 
     box = axDist.get_position()
     axDist.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+    axDist.set_xticks(np.arange(1,endEpoch-startEpoch,25))
+    axDist.set_xticklabels(np.arange(startEpoch,endEpoch,25).astype(str))
+
     axNLL.set_position([box.x0, box.y0, box.width * 0.8, box.height])
     axNLL.set_ylim(bottom=minLL,top=maxLL)
 
@@ -353,8 +389,6 @@ def distrPlot(exp_id,indModel,plotScoreDis,nbPlot=10,dx=0.01):
 
     paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)))
 
-
-    print("../data/{}.ini".format(exp_id,datasetName))
     nb_annot,nb_content,nb_video_per_content = readConfFile("../data/{}.ini".format(datasetName),["nb_annot","nb_content","nb_video_per_content"])
 
     tensorDict = {"bias":np.zeros((len(paramsPaths),int(nb_annot))),\
@@ -1051,7 +1085,7 @@ def main(argv=None):
                                     The first argument should be the model id')
     argreader.parser.add_argument('--plot_param',type=str,nargs="*",help='To plot the error of every parameters at each epoch for each model. The argument values are the index of the models to plot.')
     argreader.parser.add_argument('--plot_dist_nll',type=int,nargs="*",help='To plot the distance travelled by each parameters and the negative log-likelihood at each epoch. \
-                                    The argument values are the index of the models to plot.')
+                                    The argument values are the index of the models to plot. The two last arguments are the epochs at which to start and finish the plot.')
 
     argreader.parser.add_argument('--two_dim_repr',type=str,nargs="*",help='To plot the t-sne visualisation of the values taken by the parameters during training. \
                                     The first argument value is the id of the model to plot and the second is the start epoch. The following argument are the parameters to plot.')
@@ -1061,6 +1095,9 @@ def main(argv=None):
 
     argreader.parser.add_argument('--conv_speed',type=str,nargs='*',metavar='ID',help='To plot the error as a function of the number of annotator. The value is a list of parameters varying between \
                                     the reference models.')
+
+    argreader.parser.add_argument('--plot_video_raw_scores',type=str,nargs='*',metavar='ID',help='To plot histograms of scores for some videos of a dataset. The value of this argument is the list of videos \
+                                    line index to plot. The dataset should also be indicated with the dataset argument')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -1138,7 +1175,7 @@ def main(argv=None):
         plotParam(args.dataset,args.exp_id,args.plot_param)
 
     if args.plot_dist_nll:
-        plotDistNLL(args.exp_id,args.plot_dist_nll)
+        plotDistNLL(args.exp_id,args.plot_dist_nll[:len(args.plot_dist_nll)-2],args.plot_dist_nll[-2],args.plot_dist_nll[-1])
 
     if args.two_dim_repr:
         twoDimRepr(args.exp_id,int(args.two_dim_repr[0]),int(args.two_dim_repr[1]),args.two_dim_repr[2:])
@@ -1169,5 +1206,7 @@ def main(argv=None):
 
         convSpeed(args.exp_id,ids,seeds,args.conv_speed)
 
+    if args.plot_video_raw_scores:
+        plotVideoRawScores(args.dataset,args.plot_video_raw_scores,args.score_min,args.score_max)
 if __name__ == "__main__":
     main()
