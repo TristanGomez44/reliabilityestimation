@@ -107,13 +107,17 @@ def main(argv=None):
                 elif args.score_dis == "Normal":
                     scoresDis = Normal(trueScores[i]+bias[j], diffs[i//args.nb_video_per_content]+incons[j])
                     postProcessingFunc = lambda x:identity(x,args.score_min,args.score_max)
+                else:
+                    raise ValueError("Unkown distribution : {}".format(scoreDis))
 
                 if not args.continuous:
                     probs = torch.zeros((args.score_max+1-args.score_min))
                     for k in range(args.score_min,args.score_max+1):
-
-                        value = torch.tensor(betaNormalize(k,args.score_min,args.score_max)).float()
-                        probs[k-1] = torch.exp(scoresDis.log_prob(value))
+                        if args.score_dis == "Beta":
+                            value = torch.tensor(betaNormalize(k,args.score_min,args.score_max)).float()
+                            probs[k-1] = torch.exp(scoresDis.log_prob(value))
+                        else:
+                            probs[k-1] = torch.exp(scoresDis.log_prob(k))
 
                     discDis = Multinomial(probs=probs)
                     score = (discDis.sample().max(0)[1]+1).float()
@@ -207,6 +211,7 @@ def main(argv=None):
             scores = scores[1:].reshape(nb_content_old,nb_video_per_content_old,nb_annot_old+2)
             scores = scores[:args.nb_content,:args.nb_video_per_content,:args.nb_annot+2]
             scores = scores.reshape(scores.shape[0]*scores.shape[1],scores.shape[2])
+
         else:
             scores = scores[1:,:args.nb_annot+2]
 
