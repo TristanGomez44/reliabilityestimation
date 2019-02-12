@@ -60,14 +60,11 @@ def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
 
     #confInterList = processResults.computeConfInter(loss,model)
     keys = list(model.state_dict().keys())
-    keys = list(map(lambda x:x.replace("_opti",""),keys))
 
     for i,key in enumerate(keys):
-        tensor = torch.cat((getattr(model,key+"_freez"),getattr(model,key+"_opti")),dim=0)
+        tensor = getattr(model,key)
 
-        confInterv_freez = processResults.computeConfInter(loss,getattr(model,key+"_freez"))
-        confInterv_opti = processResults.computeConfInter(loss,getattr(model,key+"_opti"))
-        confInterv = torch.cat((confInterv_freez,confInterv_opti),dim=0).cpu().detach().numpy().reshape(-1)[:,np.newaxis]
+        confInterv = processResults.computeConfInter(loss,tensor).cpu().detach().numpy().reshape(-1)[:,np.newaxis]
 
         if model.score_dis == "Beta":
             if (keys[i] =="diffs" or keys[i]=="incons"):
@@ -247,7 +244,7 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
 
             if args.train_mode == "joint":
                 if optimConst:
-                    optimizer = optimConst((getattr(model,param+"_opti") for param in args.param_to_opti), **kwargs)
+                    optimizer = optimConst((getattr(model,param) for param in args.param_to_opti), **kwargs)
                 else:
                     optimizer = None
 
@@ -259,14 +256,14 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
                 optimizer = optimConst((getattr(model,paramName+"_opti"),), **kwargs)
 
         for key in oldParam.keys():
-            oldParam[key] = getattr(model,key+"_opti").clone()
+            oldParam[key] = getattr(model,key).clone()
 
         loss = one_epoch_train(model,optimizer,trainSet,epoch, args,args.lr[lrCounter])
         lossArray[epoch-1] = loss
 
         #Computing distance for all parameters
         for key in oldParam.keys():
-            distDict[key][epoch-1] = torch.pow(oldParam[key]-getattr(model,key+"_opti"),2).sum()
+            distDict[key][epoch-1] = torch.pow(oldParam[key]-getattr(model,key),2).sum()
             distDict["all"][epoch-1] += distDict[key][epoch-1]
         for key in  oldParam.keys():
             distDict[key][epoch-1] = np.sqrt(distDict[key][epoch-1])
@@ -340,7 +337,6 @@ def main(argv=None):
     #Building the model
     model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg,\
                                     args.score_dis,args.score_min,args.score_max,args.div_beta_var,\
-                                    args.nb_freez_truescores,args.nb_freez_bias,args.nb_freez_diffs,args.nb_freez_incons,\
                                     args.prior_update_frequ)
     if args.cuda:
         model = model.cuda()

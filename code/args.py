@@ -161,15 +161,6 @@ class ArgReader():
         self.parser.add_argument('--prior_weight', type=float,metavar='S',\
                         help='The weight of the prior term in the loss function')
 
-        self.parser.add_argument('--nb_freez_truescores', type=int,metavar='S',\
-                        help='The number of trueScores to freeze during training')
-        self.parser.add_argument('--nb_freez_bias', type=int,metavar='S',\
-                        help='The number of biases to freeze during training')
-        self.parser.add_argument('--nb_freez_diffs', type=int,metavar='S',\
-                        help='The number of difficulties to freeze during training')
-        self.parser.add_argument('--nb_freez_incons', type=int,metavar='S',\
-                        help='The number of inconsistencies to freeze during training')
-
         self.parser.add_argument('--param_to_opti', type=strToStrList,metavar='V',
                             help="The parameters to optimise. Can be a list with elements among 'bias','incons','diffs','trueScores'")
         self.parser.add_argument('--param_not_gt',type=strToStrList,metavar='V',
