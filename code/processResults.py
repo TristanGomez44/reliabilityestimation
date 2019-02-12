@@ -32,6 +32,47 @@ from sklearn.decomposition import PCA
 
 paramKeys = ["bias","incons","diffs","trueScores"]
 
+#Plot the true scores on an axis
+def plotTrueScores(exp_id,dataset,indList):
+
+    plt.figure(figsize=(60,5))
+
+    #Finding the index of the first video coming from each content
+    refVid = np.genfromtxt("../data/{}_scores.csv".format(dataset))[1:,0]
+    lastVid = None
+    firstVidIndList = []
+    for i,vid in enumerate(refVid):
+        if (not lastVid) or  lastVid != vid:
+            firstVidIndList.append(i)
+        lastVid = vid
+
+    '''
+    #Artificial dataset
+    if os.path.exists("../data/{}_trueScores.csv".format(dataset)):
+        trueScores_gt = np.genfromtxt("../data/{}_trueScores.csv".format(dataset))
+
+        scores = np.genfromtxt("../data/{}_scores.csv".format(dataset))[1:]
+        print(firstVidIndList)
+        refVidIndList = []
+        for i in range(len(firstVidIndList)-1):
+            refVidIndList.append(firstVidIndList[i]+np.argmax(trueScores_gt[firstVidIndList[i]:firstVidIndList[i+1]]))
+
+        print(refVidIndList)
+
+        plt.eventplot(trueScores_gt, orientation='horizontal', colors='b')
+        plt.eventplot(trueScores_gt[refVidIndList], orientation='horizontal', colors='red')
+    '''
+
+    colors = cm.rainbow(np.linspace(0, 1,len(indList)))
+
+    #Real dataset
+    for i,modelInd in enumerate(indList):
+
+        modelTtrueScorePath = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,modelInd)),key=findNumbers)[-1]
+        plt.eventplot(np.genfromtxt(modelTtrueScorePath)[:,0], orientation='horizontal',color=colors[i])
+
+    plt.savefig("../vis/{}/trueScores_{}_{}.png".format(exp_id,exp_id,indList))
+
 def plotVideoRawScores(dataset,lineList,score_min,score_max):
 
     lineList = np.array(lineList).astype(int)
@@ -238,7 +279,7 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParamList):
         means,stds,annotNbs = zip(*sorted(zip(means,stds,annotNbs),key=lambda x:x[2]))
 
         plt.errorbar(annotNbs,means,yerr=stds,color=baseColMapsDict[baseline],label=baseline)
-    
+
     fig.legend(loc='right')
     plt.savefig("../vis/{}/convSpeed_{}.png".format(exp_id,exp_id))
 
@@ -367,7 +408,7 @@ def plotDistNLL(exp_id,ind_list,startEpoch,endEpoch):
     axNLL.set_position([box.x0, box.y0, box.width * 0.8, box.height])
     axNLL.set_ylim(bottom=minLL,top=maxLL)
 
-    fig.legend(loc='right')
+    fig.legend(loc='right',prop={'size': 10})
 
     plt.savefig("../vis/{}/dist_nll_{}.png".format(exp_id,ind_list))
 
@@ -1012,14 +1053,20 @@ def agregateCpWGroundTruth(exp_id,resFilePath):
         print(csv,file=text_file)
 
     #Plot the agregated results
-    plt.figure()
+    fig = plt.figure()
+    plt.subplots_adjust(bottom=0.2)
+    #plt.tight_layout()
+    ax = fig.add_subplot(111)
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
 
     for i in range(len(mean)):
-        plt.bar(np.arange(resFile.shape[1]-1)+0.1*i,mean[i],width=0.1,label=list(groupedLines.keys())[i],yerr=std[i])
+        ax.bar(np.arange(resFile.shape[1]-1)+0.1*i,mean[i],width=0.1,label=keys[i],yerr=std[i])
 
     imageName = os.path.basename(resFilePath).replace(".csv",".png")
-    plt.legend()
-
+    fig.legend(loc='right')
+    plt.ylim(0,60)
+    plt.ylabel("RMSE")
     plt.gca().set_ylim(bottom=0)
     plt.xticks(np.arange(resFile.shape[1]-1),header[1:],rotation=45,horizontalalignment="right")
     plt.savefig("../vis/{}/{}".format(exp_id,imageName))
@@ -1098,6 +1145,9 @@ def main(argv=None):
 
     argreader.parser.add_argument('--plot_video_raw_scores',type=str,nargs='*',metavar='ID',help='To plot histograms of scores for some videos of a dataset. The value of this argument is the list of videos \
                                     line index to plot. The dataset should also be indicated with the dataset argument')
+
+    argreader.parser.add_argument('--plot_true_scores',type=str,nargs='*',metavar='ID',help='To plot the true scores found by several models on an axis. The argument value is the list of model indexs to plot.')
+
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -1208,5 +1258,10 @@ def main(argv=None):
 
     if args.plot_video_raw_scores:
         plotVideoRawScores(args.dataset,args.plot_video_raw_scores,args.score_min,args.score_max)
+
+    if args.plot_true_scores:
+
+        plotTrueScores(args.exp_id,args.dataset,args.plot_true_scores)
+
 if __name__ == "__main__":
     main()
