@@ -29,7 +29,8 @@ class MLE(nn.Module):
 
         self.bias = nn.Parameter(torch.ones(annotNb))
         self.incons  = nn.Parameter(torch.ones(annotNb))
-        self.diffs  = nn.Parameter(torch.ones(contentNb,polyDeg+1))
+        self.diffs  = nn.Parameter(torch.ones(contentNb*(polyDeg+1)))
+
         self.trueScores  = nn.Parameter(torch.ones(videoNb))
 
         self.annotNb = annotNb
@@ -102,11 +103,13 @@ class MLE(nn.Module):
 
         #print("diff",torch.sigmoid(self.diffs[0]),"incons",torch.sigmoid(self.incons[0]))
 
+        self.diffs_mat = self.diffs.view(self.contentNb,self.polyDeg+1)
+
         #Matrix containing the sum of all (video_amb,annot_incons) possible pairs
         #amb = self.diffs.unsqueeze(1).expand(self.contentNb, self.distorNb).contiguous().view(-1)
         tmp = []
         for i in range(self.contentNb):
-            tmp.append(torch.sigmoid(self.diffs[i]).unsqueeze(1).expand(self.polyDeg+1,self.distorNbList[i]))
+            tmp.append(torch.sigmoid(self.diffs_mat[i]).unsqueeze(1).expand(self.polyDeg+1,self.distorNbList[i]))
 
         amb = torch.cat(tmp,dim=1).permute(1,0)
         #amb = amb.expand(amb.size(0),self.polyDeg)
@@ -232,7 +235,7 @@ class MLE(nn.Module):
         #video_amb = torch.sqrt(torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2).mean(dim=1))
         video_amb = torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2).mean(dim=1)
 
-        content_amb = torch.zeros(len(self.distorNbList),1)
+        content_amb = torch.zeros(len(self.distorNbList)*(self.polyDeg+1))
         sumInd = 0
 
         for i in range(len(self.distorNbList)):
