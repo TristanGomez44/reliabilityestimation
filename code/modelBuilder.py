@@ -227,9 +227,6 @@ class MLE(nn.Module):
     def bInitBase(self,dataInt):
         return (dataInt.float()-self.trueScores.unsqueeze(1).expand_as(dataInt)).mean(dim=0)
 
-    def bInitZeros(self,dataInt):
-        return torch.zeros(dataInt.size(1))
-
     def dInitBase(self,dataInt):
 
         #video_amb = torch.sqrt(torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2).mean(dim=1))
@@ -244,23 +241,6 @@ class MLE(nn.Module):
             sumInd += self.distorNbList[i]
 
         return torch.clamp(content_amb,0.01,0.99)
-
-    def dInitWithIncons(self,dataInt):
-
-        exp_incons = torch.pow(self.incons.unsqueeze(0).expand(dataInt.size(0),self.incons.size(0)),2)
-
-        video_amb = (torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2)-exp_incons).mean(dim=1)
-        content_amb = torch.zeros(len(self.distorNbList),1)
-        sumInd = 0
-
-        print(video_amb)
-        for i in range(len(self.distorNbList)):
-
-            content_amb[i] = torch.sqrt(video_amb[sumInd:sumInd+self.distorNbList[i]].mean())
-            sumInd += self.distorNbList[i]
-
-
-        return content_amb
 
     def iInitBase(self,dataInt):
 
@@ -357,35 +337,6 @@ class MLE(nn.Module):
         else:
             raise ValueError("No such prior : {}".format(priorName))
 
-    def newtonUpdate(xInt):
-
-        x = xInt.float()
-
-        #Matrix containing the sum of all (video_amb,annot_incons) possible pairs
-        tmp = []
-        for i in range(self.contentNb):
-            tmp.append(self.diffs[i].expand(self.distorNbList[i]))
-
-        amb = torch.cat(tmp,dim=1).unsqueeze(0)
-        amb_sq = torch.pow(amb,2)
-        amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
-        incon_sq = torch.pow(self.incons,2)
-        incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
-        w_es = amb_sq+incon_sq
-
-        scor = self.trueScores.unsqueeze(1).expand(self.videoNb, self.annotNb)
-        bias = self.bias.unsqueeze(0).expand(self.videoNb, self.annotNb)
-
-        scor_new = (w_es*(x-bias)/w_es).sum(dim=1)
-        bias_new = (w_es*(x-scor)/w_es).sum(dim=0)
-
-        #incon = self.incons.unsqueeze(0).expand(self.videoNb, self.annotNb)
-        v = self.incons
-
-        w_es_sq = torch.pow(w_es,2)
-
-        incons_new = v - ((w_es*v-w_es_sq*v*torch.pow(x-scor-bias,2))/()).sum(dim=0)
-
     def getFlatParam(self):
 
         return torch.cat((self.trueScores,self.bias,self.incons.view(-1),self.diffs.view(-1)),dim=0)
@@ -433,40 +384,6 @@ def removeColumns(data,removeList):
             data_rm[:,colCount] = data[:,j]
             colCount += 1
     return data_rm
-
-def scrambleColumns(data,annotToScramble):
-
-    data_scr = data.clone()
-
-    randomScores = torch.zeros((data.size(0),len(annotToScramble))).int().random_(1,6)
-    #print(randomScores)
-    c=0
-    for i in range(len(data)):
-        if i in annotToScramble:
-            data_scr[:,i] = randomScores[:,c]
-            c += 1
-    #print(data_scr)
-    return data_scr
-
-def scoreNoise(data,noisePercent):
-
-    dataFlat = data.view(-1)
-    noisy_score_nb = int(noisePercent*dataFlat.size(0))
-
-    scoresInd = random.sample(range(dataFlat.size(0)),noisy_score_nb)
-    scoresNoise = torch.LongTensor(noisy_score_nb).random_(0, 2)*2-1
-
-    c = 0
-    for i in range(len(dataFlat)):
-        if i in scoresInd:
-            if dataFlat[i]==1:
-                dataFlat[i]=2
-            elif  dataFlat[i]==5:
-                dataFlat[i]=4
-            else:
-                dataFlat[i] += scoresNoise[c]
-            c += 1
-    return dataFlat.view(data.size())
 
 def MOS(dataInt,z_score,sub_rej):
 

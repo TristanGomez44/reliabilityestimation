@@ -32,74 +32,6 @@ from sklearn.decomposition import PCA
 
 paramKeys = ["bias","incons","diffs","trueScores"]
 
-#Plot the true scores on an axis
-def plotTrueScores(exp_id,dataset,indList):
-
-    plt.figure(figsize=(60,5))
-
-    #Finding the index of the first video coming from each content
-    refVid = np.genfromtxt("../data/{}_scores.csv".format(dataset))[1:,0]
-    lastVid = None
-    firstVidIndList = []
-    for i,vid in enumerate(refVid):
-        if (not lastVid) or  lastVid != vid:
-            firstVidIndList.append(i)
-        lastVid = vid
-
-    '''
-    #Artificial dataset
-    if os.path.exists("../data/{}_trueScores.csv".format(dataset)):
-        trueScores_gt = np.genfromtxt("../data/{}_trueScores.csv".format(dataset))
-
-        scores = np.genfromtxt("../data/{}_scores.csv".format(dataset))[1:]
-        print(firstVidIndList)
-        refVidIndList = []
-        for i in range(len(firstVidIndList)-1):
-            refVidIndList.append(firstVidIndList[i]+np.argmax(trueScores_gt[firstVidIndList[i]:firstVidIndList[i+1]]))
-
-        print(refVidIndList)
-
-        plt.eventplot(trueScores_gt, orientation='horizontal', colors='b')
-        plt.eventplot(trueScores_gt[refVidIndList], orientation='horizontal', colors='red')
-    '''
-
-    colors = cm.rainbow(np.linspace(0, 1,len(indList)))
-
-    #Real dataset
-    for i,modelInd in enumerate(indList):
-
-        modelTtrueScorePath = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,modelInd)),key=findNumbers)[-1]
-        plt.eventplot(np.genfromtxt(modelTtrueScorePath)[:,0], orientation='horizontal',color=colors[i])
-
-    plt.savefig("../vis/{}/trueScores_{}_{}.png".format(exp_id,exp_id,indList))
-
-def plotVideoRawScores(dataset,lineList,score_min,score_max):
-
-    lineList = np.array(lineList).astype(int)
-
-    lines = np.genfromtxt("../data/{}_scores.csv".format(dataset),dtype=str)[lineList]
-    lineNames = lines[:,1]
-    lines = lines[:,2:].astype(int)
-
-    width = 1
-    nb_lines = int(math.sqrt(len(lines)))
-
-    plt.figure()
-    #plt
-    plt.subplots_adjust(hspace=0.3)
-
-    for i,line in enumerate(lines):
-
-        subplot = plt.subplot(nb_lines,nb_lines,i+1)
-        bins = np.arange(score_min,score_max+1)-0.5*width
-
-        subplot.hist(line, score_max-score_min+1,color='black',range=(score_min,score_max+1))
-        subplot.set_xticks(np.arange(score_min,score_max+1)+0.5*width)
-        subplot.set_xticklabels(np.arange(score_min,score_max+1).astype(str))
-        subplot.set_title(lineNames[i])
-
-    plt.savefig("../vis/{}_scores.png".format(dataset))
-
 def agregate(pairList):
 
     nbAnnotAgreg = []
@@ -330,22 +262,12 @@ def distHeatMap(exp_id,params,param1,param2,minLog=0,maxLog=10,nbStep=100,nbEpoc
                     plt.savefig("../vis/{}/distHeatMap_{}.png".format(exp_id,header[j]))
                     plt.close()
 
-def plot_points_arrows(repres,filePath,alphas,colors):
-
-    plt.figure()
-
-    #for i,point in enumerate(repres):
-    #    if i<len(repres)-1:
-    #        plt.plot([repres[i,0],repres[i+1,0]],[repres[i,1],repres[i+1,1]],alpha=alphas[i], zorder=1,color="black")
-
-    plt.scatter(repres[:,0],repres[:,1],color=colors, zorder=2)
-
-    plt.savefig(filePath)
-
-def twoDimRepr(exp_id,model_id,start_epoch,paramPlot):
+def twoDimRepr(exp_id,model_id,start_epoch,paramPlot,plotRange):
 
     def getEpoch(path):
         return findNumbers(os.path.basename(path).replace("model{}".format(model_id),""))
+
+    cleanNamesDict = {"trueScores":"True Scores","bias":"Biases","diffs":"Ambiguities","incons":"Inconsistencies"}
 
     for key in paramPlot:
         paramFiles = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,model_id,key)),key=findNumbers)
@@ -354,15 +276,24 @@ def twoDimRepr(exp_id,model_id,start_epoch,paramPlot):
         colors = cm.plasma(np.linspace(0, 1,len(paramFiles)))
 
         params = list(map(lambda x:np.genfromtxt(x)[:,0],paramFiles))
-        alphas = np.power(np.arange(len(params))/len(params),4)
 
         repr_tsne = TSNE(n_components=2,init='pca',random_state=1,learning_rate=20).fit_transform(params)
         repr_pca = PCA(n_components=2).fit_transform(params)
 
-        plot_points_arrows(repr_tsne,"../vis/{}/model{}_{}_tsne.png".format(exp_id,model_id,key),alphas,colors)
-        plot_points_arrows(repr_pca,"../vis/{}/model{}_{}_pca.png".format(exp_id,model_id,key),alphas,colors)
+        plt.figure()
+        plt.title("model "+str(model_id)+" : "+cleanNamesDict[key])
+        plt.scatter(repr_tsne[:,0],repr_tsne[:,1],color=colors, zorder=2)
+        plt.savefig("../vis/{}/model{}_{}_tsne.png".format(exp_id,model_id,key))
 
-def plotDistNLL(exp_id,ind_list,startEpoch,endEpoch):
+        plt.figure()
+        plt.title("model "+str(model_id)+" : "+cleanNamesDict[key])
+        plt.scatter(repr_pca[:,0],repr_pca[:,1],color=colors, zorder=2)
+        if plotRange:
+            plt.xlim(plotRange[0],plotRange[1])
+            plt.ylim(plotRange[2],plotRange[3])
+        plt.savefig("../vis/{}/model{}_{}_pca.png".format(exp_id,model_id,key))
+
+def plotDistNLL(exp_id,ind_list,startEpoch,endEpoch,plotRange):
 
     colors = cm.rainbow(np.linspace(0, 1, len(paramKeys)+1))
 
@@ -404,6 +335,7 @@ def plotDistNLL(exp_id,ind_list,startEpoch,endEpoch):
     axDist.set_position([box.x0, box.y0, box.width * 0.8, box.height])
     axDist.set_xticks(np.arange(1,endEpoch-startEpoch,25))
     axDist.set_xticklabels(np.arange(startEpoch,endEpoch,25).astype(str))
+    axDist.set_ylim(plotRange)
 
     axNLL.set_position([box.x0, box.y0, box.width * 0.8, box.height])
     axNLL.set_ylim(bottom=minLL,top=maxLL)
@@ -621,6 +553,8 @@ def fakeDataDIstr(args):
     dataConf = dataConf['default']
 
     paramKeys = ["trueScores","diffs","incons","bias"]
+
+    cleanNames = ["True Scores","Difficulties","Inconsistencies","Biases"]
     dx = 0.01
 
 
@@ -636,74 +570,15 @@ def fakeDataDIstr(args):
 
     for i,paramName in enumerate(paramKeys):
 
-        paramValues = np.genfromtxt("../data/artifData{}_{}.csv".format(dataConf["dataset_id"],paramName))
+        paramValues = np.genfromtxt("../data/{}_{}.csv".format(dataConf["dataset_id"],paramName))
         trueCDF = dist_dic[paramName](range_dic[paramName]).numpy().reshape(-1)
 
         plt.figure(i)
-        plt.plot(range_dic[paramName].numpy(),trueCDF)
-        plt.hist(paramValues,10,density=True)
-        plt.savefig("../vis/{}/{}_dis.png".format(args.exp_id,paramName))
-
-def getModels(args,trainSet,distorNbList):
-
-    iniPaths = sorted(glob.glob("../models/{}/*.ini".format(args.exp_id)))
-
-    #Count the number of net in the experiment
-    netNumber = len(iniPaths)
-
-    modelList = []
-    modelNameList = []
-    lossList = []
-    #Finding the last weights for each model
-    for i in range(netNumber):
-
-        net_id = findNumbers(os.path.basename(iniPaths[i]))
-        lastModelPath = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,net_id)),key=findNumbers)[-1]
-        modelNameList.append(str(net_id))
-
-        model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg)
-        model.load_state_dict(torch.load(lastModelPath))
-        modelList.append(model)
-
-        loss = model(trainSet)
-        lossList.append(loss)
-
-    return modelList,modelNameList,lossList
-
-def PolyCoefficients(x, coeffs):
-    o = len(coeffs)
-
-    y = 0
-    for i in range(o):
-        y += coeffs[i]*x**i
-    return y
-
-def mean_std_plot(data,distorNbList,dataset,exp_id,model):
-    #cmap = cm.get_cmap(name='rainbow')
-    colors = cm.rainbow(np.linspace(0, 1, len(distorNbList)))
-
-    plt.figure()
-    currInd = 0
-    x = np.linspace(1, 5, 10)
-    for i in range(len(distorNbList)):
-
-        #The data for all videos made from this reference video
-        videoData = data[currInd:currInd+distorNbList[i]]
-        currInd += distorNbList[i]
-
-        means = videoData.mean(dim=1)
-        stds = videoData.std(dim=1)
-
-        plt.plot(means.numpy(),stds.numpy(),"*",color=colors[i])
-
-        #Plotting the polynomial modeling the dependency between video mean score and video std score deviation
-        coeffs = model.video_amb[i].cpu().detach().numpy()
-        plt.plot(x, PolyCoefficients(x, coeffs),color=colors[i])
-
-    plt.xlim([1, 5])
-    plt.ylim([0,max(stds)*1.2])
-
-    plt.savefig("../vis/{}/mean-stds_{}.png".format(exp_id,dataset))
+        plt.title(cleanNames[i])
+        plt.plot(range_dic[paramName].numpy(),trueCDF,label="True distribution")
+        plt.hist(paramValues,10,label="Empirical distribution")
+        plt.legend()
+        plt.savefig("../vis/{}_{}_dis.png".format(args.dataset,paramName))
 
 def std(data,distorNbList,dataset):
 
@@ -746,95 +621,6 @@ def mean_std(model,loss):
     mle_std = 1.96/torch.sqrt(train_val.computeHessDiag(loss,mle_mean)[0])
     return mle_mean,mle_std
 
-def deteriorateData(trainSet,nb_annot,nb_corr,noise_percent):
-
-    data = trainSet.clone()
-    nb_annot = int(nb_annot)
-    nb_corr = int(nb_corr)
-
-    #Remove annotators
-    if nb_annot < data.size(1):
-        annotToRemove = random.sample(range(data.size(1)),data.size(1)-nb_annot)
-        data = modelBuilder.removeColumns(data,annotToRemove)
-
-    #Randomly scramble subject scores
-    if nb_corr > 0:
-        annotToScramble = random.sample(range(nb_annot),nb_corr)
-        data = modelBuilder.scrambleColumns(data,annotToScramble)
-
-    if noise_percent>0:
-        data = modelBuilder.scoreNoise(data,noise_percent)
-
-    return data
-
-def robustness(model,trainSet,distorNbList,args,paramValues,paramName,corrKwargs,nbRep=100):
-
-    if type(args.lr) is float:
-        args.lr = [args.lr]
-
-    #Getting the contructor and the kwargs for the choosen optimizer
-    optimConst,kwargs = train_val.get_OptimConstructor(args.optim,args.momentum)
-
-    model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg)
-    loss,_ = train_val.train(model,optimConst,kwargs,trainSet, args)
-
-    mle_mean_ref,_ = mean_std(model,loss)
-    mos_mean_ref,sr_mean_ref,zs_sr_mean_ref = computeBaselines(trainSet)[:3]
-
-    valueNumber = len(paramValues)
-    mle_err = np.zeros((valueNumber,nbRep,len(args.model_values)))
-    mos_err = np.zeros((valueNumber,nbRep))
-    sr_err = np.zeros((valueNumber,nbRep))
-    zs_sr_err = np.zeros((valueNumber,nbRep))
-
-    if (not os.path.exists("../results/{}/mle_err_epoch{}.csv".format(args.exp_id,args.epochs))) or args.erase_results:
-        for i,paramValue in enumerate(paramValues):
-
-            if i%5==0:
-                print(paramName,":",paramValue,"/",valueNumber)
-            for j in range(nbRep):
-
-                corrKwargs[paramName] = paramValue
-
-                #Randomly remove or scramble annotator scores
-                data = deteriorateData(trainSet,**corrKwargs)
-
-                for k in range(len(args.model_values)):
-                    model = modelBuilder.modelMaker(int(corrKwargs["nb_annot"]),len(data),distorNbList,args.poly_deg)
-                    setattr(args, args.model_param, args.model_values[k])
-                    loss,_ = train_val.train(model,optimConst,kwargs,data, args)
-                    mle_mean,_ = mean_std(model,loss)
-                    mle_err[i,j,k] = RMSE(mle_mean_ref,mle_mean)
-
-                mos_mean,sr_mean,zs_sr_mean = computeBaselines(data)[:3]
-                mos_err[i,j] = RMSE(mos_mean_ref,mos_mean)
-                sr_err[i,j] = RMSE(sr_mean_ref,sr_mean)
-                zs_sr_err[i,j] = RMSE(zs_sr_mean_ref,zs_sr_mean)
-
-        np.savetxt("../results/{}/mle_err_epoch{}.csv".format(args.exp_id,args.epochs),mle_err.reshape(mle_err.shape[0],mle_err.shape[1]*mle_err.shape[2]))
-        np.savetxt("../results/{}/mos_err_epoch{}.csv".format(args.exp_id,args.epochs),mos_err)
-        np.savetxt("../results/{}/sr_err_epoch{}.csv".format(args.exp_id,args.epochs),sr_err)
-        np.savetxt("../results/{}/zs_sr_err_epoch{}.csv".format(args.exp_id,args.epochs),zs_sr_err)
-
-    else:
-        mle_err = np.genfromtxt("../results/{}/mle_err_epoch{}_model{}.csv".format(args.exp_id,args.epochs)).reshape(mle_err.shape[0],mle_err.shape[1]//len(args.model_values),len(args.model_values))
-        mos_err =  np.genfromtxt("../results/{}/mos_err_epoch{}.csv".format(args.exp_id,args.epochs))
-        sr_err = np.genfromtxt("../results/{}/sr_err_epoch{}.csv".format(args.exp_id,args.epochs))
-        zs_sr_err = np.genfromtxt("../results/{}/zs_sr_err_epoch{}.csv".format(args.exp_id,args.epochs))
-
-    plt.figure()
-    #rangeAnnot = np.array(rangeAnnot)
-
-    plt.errorbar(paramValues,mos_err.mean(axis=1), yerr=1.96*mos_err.std(axis=1)/np.sqrt(nbRep),label="MOS")
-    plt.errorbar(paramValues,sr_err.mean(axis=1), yerr=1.96*sr_err.std(axis=1)/np.sqrt(nbRep),label="SR-MOS")
-    plt.errorbar(paramValues,zs_sr_err.mean(axis=1), yerr=1.96*zs_sr_err.std(axis=1)/np.sqrt(nbRep),label="ZS-SR-MOS")
-    for k in range(len(args.model_values)):
-        plt.errorbar(paramValues,mle_err[:,:,k].mean(axis=1), yerr=1.96*mle_err[:,:,k].std(axis=1)/np.sqrt(nbRep),label="MLE{}".format(k))
-    plt.ylim(ymin=0)
-    plt.legend()
-
-    plt.savefig("../vis/{}/robustness_epoch{}_model{}.png".format(args.exp_id,args.epochs,args.ind_id))
-
 def computeConfInter(loss,tensor):
 
     hessDiag,grad = train_val.computeHessDiag(loss,tensor)
@@ -842,64 +628,6 @@ def computeConfInter(loss,tensor):
     confInter = 1.96/torch.sqrt(hessDiag)
 
     return confInter
-
-def plotMLE(lossList,modelList,modelNameList,exp_id,dataset=None,ind_id=None,mos_mean=None,mos_std=None):
-
-    interv = [[-1,1],[0,2],[-1,2],[1,5]]
-
-    if not (ind_id is None):
-        modelList = [modelList[ind_id]]
-        lossList = [lossList[ind_id]]
-        modelNameList = [modelNameList[ind_id]]
-
-    for i,key in enumerate(modelList[0].state_dict()):
-
-        if os.path.exists("../data/{}_{}.csv".format(dataset,key)):
-            gt_values = np.genfromtxt("../data/{}_{}.csv".format(dataset,key))
-        else:
-            gt_values = None
-
-        for j,model in enumerate(modelList):
-
-            confInterList = computeConfInter(lossList[j],modelList[j])
-
-            if key == "video_scor":
-                plt.figure(i,figsize=(20,5))
-            else:
-                plt.figure(i)
-
-            plt.grid()
-            plt.xlabel("Individual")
-            plt.ylabel("MLE")
-
-            if model.state_dict()[key].is_cuda:
-                values = model.state_dict()[key].cpu().numpy()
-                yErrors = confInterList[i].cpu().detach().numpy()
-            else:
-                values = model.state_dict()[key].numpy()
-                yErrors = confInterList[i].detach().numpy()
-
-            if key =="video_amb":
-                values = np.abs(values)
-
-            plt.errorbar([i+0.3*j for i in range(len(values))],values, yerr=yErrors, fmt="*",label=modelNameList[j])
-            #plt.plot([i+0.3*j for i in range(len(values))],values,"*",label=modelNameList[j])
-
-            if key == "video_scor" and (not (mos_mean is None)):
-                plt.errorbar([i+0.5 for i in range(len(values))],mos_mean, yerr=mos_std, fmt="*")
-
-            if not (gt_values is None):
-                plt.plot([i for i in range(len(gt_values))],gt_values,"*",label="GT")
-
-            plt.legend()
-            plt.savefig("../vis/{}/{}.png".format(exp_id,key))
-
-            plt.figure(i+len(model.state_dict()))
-            plt.grid()
-            plt.xlim(interv[i])
-
-            plt.hist(values,10,density=True)
-            plt.savefig("../vis/{}/{}_hist.png".format(exp_id,key))
 
 def error(dictPred,dictGT,paramNames,errFunc):
 
@@ -1111,12 +839,6 @@ def main(argv=None):
     #Building the arg reader
     argreader = ArgReader(argv)
 
-    argreader.parser.add_argument('--params',type=int, metavar='S',nargs="*",help='To plot the parameters learned')
-
-    argreader.parser.add_argument('--mos',action='store_true',help='To plot the scores found by mos with the --params plot')
-    argreader.parser.add_argument('--robust',action='store_true',help='To test the robustness of the model')
-    argreader.parser.add_argument('--std_mean',action='store_true',help='To plot the std of score as function of mean score \
-                                with the parameters tuned to model this function')
     argreader.parser.add_argument('--comp_gt',type=str,nargs="*",metavar='PARAM',help='To compare the parameters found with the ground truth parameters. Require a fake dataset. The argument should\
                                     be the list of parameters varying across the different models in the experiment.')
     argreader.parser.add_argument('--comp_gt_agr',type=str,nargs="*",metavar='PARAM',help='To compare the parameters found with the ground truth parameters. Require a fake dataset. The argument should\
@@ -1143,10 +865,8 @@ def main(argv=None):
     argreader.parser.add_argument('--conv_speed',type=str,nargs='*',metavar='ID',help='To plot the error as a function of the number of annotator. The value is a list of parameters varying between \
                                     the reference models.')
 
-    argreader.parser.add_argument('--plot_video_raw_scores',type=str,nargs='*',metavar='ID',help='To plot histograms of scores for some videos of a dataset. The value of this argument is the list of videos \
-                                    line index to plot. The dataset should also be indicated with the dataset argument')
-
-    argreader.parser.add_argument('--plot_true_scores',type=str,nargs='*',metavar='ID',help='To plot the true scores found by several models on an axis. The argument value is the list of model indexs to plot.')
+    argreader.parser.add_argument('--plot_range_pca',type=float,nargs=4,metavar="RANGE",help='The range to use when ploting the PCA. The values should be indicated in this order : xmin,xmax,ymin,ymax.')
+    argreader.parser.add_argument('--plot_range_dist',type=float,nargs=2,metavar="RANGE",help='The range to use when ploting the distance. The values should be indicated in this order : ymin,ymax.')
 
 
     #Reading the comand line arg
@@ -1168,39 +888,6 @@ def main(argv=None):
         os.makedirs("../models/{}".format(args.exp_id))
 
     trainSet,distorNbList = load_data.loadData(args.dataset)
-
-    if args.params:
-
-        modelList,modelNameList,lossList = getModels(args,trainSet,distorNbList)
-        if len(args.params) > 0:
-            ind_id = args.params[0]
-        else:
-            ind_id = None
-
-        if args.mos:
-            mos_mean,mos_std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=False)
-        else:
-            mos_mean,mos_std = None,None
-
-        plotMLE(lossList,modelList,modelNameList,args.exp_id,dataset=args.dataset,ind_id=ind_id,mos_mean=mos_mean,mos_std=mos_std)
-
-    if args.robust:
-        model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg)
-        corrKwargs = {"nb_annot":trainSet.size(1),"nb_corr":0,"score_noise":0}
-        if type(args.rob_param_values) is float:
-            args.rob_param_values = [args.rob_param_values]
-        if type(args.model_values) is float:
-            args.model_values = [args.model_values]
-
-        robustness(model,trainSet,distorNbList,args,args.rob_param_values,args.rob_param,corrKwargs,args.nb_rep)
-
-    if args.std_mean:
-        config = configparser.ConfigParser()
-        config.read("../models/{}/model{}.ini".format(args.exp_id,args.ind_id))
-        model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,int(config["default"]["poly_deg"]))
-        lastModelPath = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,args.ind_id)),key=lambda x:findNumbers(x))[-1]
-        model.load_state_dict(torch.load(lastModelPath))
-        mean_std_plot(trainSet,distorNbList,args.dataset,args.exp_id,model)
 
     if args.comp_gt:
         compareWithGroundTruth(args.exp_id,args.comp_gt,args.error_metric)
@@ -1225,10 +912,10 @@ def main(argv=None):
         plotParam(args.dataset,args.exp_id,args.plot_param)
 
     if args.plot_dist_nll:
-        plotDistNLL(args.exp_id,args.plot_dist_nll[:len(args.plot_dist_nll)-2],args.plot_dist_nll[-2],args.plot_dist_nll[-1])
+        plotDistNLL(args.exp_id,args.plot_dist_nll[:len(args.plot_dist_nll)-2],args.plot_dist_nll[-2],args.plot_dist_nll[-1],args.plot_range_dist)
 
     if args.two_dim_repr:
-        twoDimRepr(args.exp_id,int(args.two_dim_repr[0]),int(args.two_dim_repr[1]),args.two_dim_repr[2:])
+        twoDimRepr(args.exp_id,int(args.two_dim_repr[0]),int(args.two_dim_repr[1]),args.two_dim_repr[2:],args.plot_range_pca)
 
     if args.dist_heatmap:
         distHeatMap(args.exp_id,args.dist_heatmap[:-2],param1=args.dist_heatmap[-2],param2=args.dist_heatmap[-1])
@@ -1255,13 +942,6 @@ def main(argv=None):
         ids,seeds = zip(*sorted(zip(ids,seeds),key=lambda x:x[0]))
 
         convSpeed(args.exp_id,ids,seeds,args.conv_speed)
-
-    if args.plot_video_raw_scores:
-        plotVideoRawScores(args.dataset,args.plot_video_raw_scores,args.score_min,args.score_max)
-
-    if args.plot_true_scores:
-
-        plotTrueScores(args.exp_id,args.dataset,args.plot_true_scores)
 
 if __name__ == "__main__":
     main()
