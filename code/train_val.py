@@ -57,15 +57,29 @@ class GradNoise():
             return grad + noise.float()
 
 def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
+    '''Writes the parameter of a model in a csv file. Also writes the 95% confidence interval
 
+    Args:
+        loss (torch.Tensor): the loss (used to compute confidence interval)
+        model (MLE): an MLE model as defined in modelBuilder.py
+        exp_id (str): the experience name
+        ind_id (int): the model name
+        epoch (int): the epoch number
+        scoresDis (str): the score distribution used
+        score_min (int): the minimum score that can be given to a video
+        score_max (int): the maximum score that can be given to a video
+    '''
 
     keys = list(model.state_dict().keys())
 
     for i,key in enumerate(keys):
         tensor = getattr(model,key)
 
+        #Computes the confidence intervals
         confInterv = processResults.computeConfInter(loss,tensor).cpu().detach().numpy().reshape(-1)[:,np.newaxis]
 
+        #Difficulties and inconsistencies have a Beta prior so they must stay in the range [0,1]
+        #which is why the sigmoid is used
         if model.score_dis == "Beta":
             if (keys[i] =="diffs" or keys[i]=="incons"):
                 tensor = torch.sigmoid(tensor)
@@ -79,13 +93,22 @@ def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
         np.savetxt("../results/{}/model{}_epoch{}_{}.csv".format(exp_id,ind_id,epoch,keys[i]),concat,delimiter="\t")
 
 def addLossTerms(loss,model,weight,cuda):
+    '''Add prior term to the loss
+
+    Args:
+        loss (torch.Tensor): the loss (used to compute confidence interval)
+        model (MLE): an MLE model as defined in modelBuilder.py
+        weight (float): weight of the prior term
+        cuda (bool): whether to use cuda or not
+    Returns the loss with the prior terms added
+    '''
 
     if weight>0:
         loss = weight*model.prior(loss)
 
     return loss
 
-def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
+def one_epoch_train(model,optimizer,trainMatrix, epoch, args):
     '''Train a model
 
     After having run the model on every input of the train set,
@@ -108,7 +131,7 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
 
     loss = neg_log_proba
 
-    loss = addLossTerms(loss,model,args.prior_weight,args.norm_sum,trainMatrix.is_cuda)
+    loss = addLossTerms(loss,model,args.prior_weight,trainMatrix.is_cuda)
 
     loss.backward(retain_graph=True)
 
@@ -130,6 +153,12 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
     return loss
 
 def computeHessDiag(loss,tensor):
+    '''Compute the diagonal of the hessian matrix of a vector relative to some loss
+
+    Args:
+        loss (torch.Tensor): the loss (used to compute confidence interval)
+        tensor (torch.Tensor): the vector to compute the hessian diagonal of.
+    '''
 
     gradient = grad(loss, tensor, create_graph=True)
     gradient = gradient[0]
@@ -143,6 +172,7 @@ def get_OptimConstructor(optimStr,momentum):
     '''Return the apropriate constructor and keyword dictionnary for the choosen optimiser
     Args:
         optimStr (str): the name of the optimiser. Can only be \'GD\', \'LBFGS\' or \'NEWTON\'.
+        momentum (float): momentum to use for the GD optimizer
     Returns:
         the constructor of the choosen optimiser and the apropriate keyword dictionnary
     '''
@@ -166,6 +196,19 @@ def get_OptimConstructor(optimStr,momentum):
     return optimConst,kwargs
 
 def train(model,optimConst,kwargs,trainSet, args,startEpoch):
+    '''Train a model during several epochs. The training stops when the distance travelled by parameters gets
+    very low or when the maximum number of epochs has been reached.
+
+    Args:
+        model (MLE): an MLE model as defined in modelBuilder.py
+        optimConst (torch.optim): the constructor of an optimiser, e.g. "torch.optim.sgd.SGD".
+        kwargs (dict): a dictionnary containing argument for the optimiser constructor
+        trainSet (torch.tensor): the score matrix to train on
+        args (Namespace): the namespace containing all the arguments required for training and building the model
+        startEpoch (int): the epoch number at which the training start
+    Returns:
+        the loss and the epoch number at which the training stopped
+    '''
 
     epoch = startEpoch
     dist = args.stop_crit+1
@@ -209,7 +252,7 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
         for key in oldParam.keys():
             oldParam[key] = getattr(model,key).clone()
 
-        loss = one_epoch_train(model,optimizer,trainSet,epoch, args,args.lr[lrCounter])
+        loss = one_epoch_train(model,optimizer,trainSet,epoch, args)
         lossArray[epoch-1] = loss
 
         #Computing distance for all parameters

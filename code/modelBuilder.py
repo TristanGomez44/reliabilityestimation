@@ -21,11 +21,25 @@ import configparser
 import generateData
 import os
 class MLE(nn.Module):
-    ''' Implement the model proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
+    ''' Implement all the models proposed in our paper including the one proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
 
-    def __init__(self,videoNb,contentNb,annotNb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ):
+    def __init__(self,videoNb,annotNb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ):
+        '''
+        Args:
+            videoNb (int): the total number of video
+            annotNb (int): the number of annotators
+            distorNbList (list): the number of videos for each reference videos, in the same order than in the dataset.
+            polyDeg (int): the degree of the polynom used to model video ambiguities. E.g. 0 makes the video ambiguity depends only on the content
+            scoresDis (str): the score distribution used
+            score_min (int): the minimum score that can be given to a video
+            score_max (int): the maximum score that can be given to a video
+            div_beta_var (int): the factor with which to reduce the variance of the beta distribution, to ensure numerical stability.
+            priorUpdateFrequ (int): the number of epoch to wait before updating the empirical prior. Ignored if the empirical prior is not used.
+        '''
 
         super(MLE, self).__init__()
+
+        contentNb = len(distorNbList)
 
         self.bias = nn.Parameter(torch.ones(annotNb))
         self.incons  = nn.Parameter(torch.ones(annotNb))
@@ -55,6 +69,10 @@ class MLE(nn.Module):
         self.priorUpdateFrequ = priorUpdateFrequ
 
     def forward(self,xInt):
+        '''Compute the negative log probability of the data according to the model
+        Args:
+            xInt (torch.tensor): the score matrix to train on
+        '''
 
         if self.priorName == "empirical":
             #print(self.priorUpdateCount)
@@ -80,7 +98,10 @@ class MLE(nn.Module):
         return -log_prob
 
     def compScoreDis(self,x_is_cuda):
-
+        '''Build the raw scores distributions
+        Args:
+            x_is_cuda (bool): whether or not to use cuda
+        '''
         amb_incon = self.ambInconsMatrix(x_is_cuda)
         scor_bias = self.trueScoresBiasMatrix()
 
@@ -100,20 +121,22 @@ class MLE(nn.Module):
         return scoresDis
 
     def ambInconsMatrix(self,xIsCuda):
+        '''Computes the variances of the raw score distributions according to the model.
 
-        #print("diff",torch.sigmoid(self.diffs[0]),"incons",torch.sigmoid(self.incons[0]))
+        The result is a matrix where each cell is the variance of a raw score density
+
+        Args:
+            x_is_cuda (bool): whether or not to use cuda
+        '''
 
         self.diffs_mat = self.diffs.view(self.contentNb,self.polyDeg+1)
 
         #Matrix containing the sum of all (video_amb,annot_incons) possible pairs
-        #amb = self.diffs.unsqueeze(1).expand(self.contentNb, self.distorNb).contiguous().view(-1)
         tmp = []
         for i in range(self.contentNb):
             tmp.append(torch.sigmoid(self.diffs_mat[i]).unsqueeze(1).expand(self.polyDeg+1,self.distorNbList[i]))
 
         amb = torch.cat(tmp,dim=1).permute(1,0)
-        #amb = amb.expand(amb.size(0),self.polyDeg)
-        #print(amb.size())
 
         vid_means = self.trueScores.unsqueeze(1).expand(self.trueScores.size(0),self.polyDeg+1)
         powers = torch.arange(self.polyDeg+1).float()
@@ -121,68 +144,41 @@ class MLE(nn.Module):
             powers = powers.cuda()
         powers = powers.unsqueeze(1).permute(1,0).expand(vid_means.size(0),self.polyDeg+1)
         vid_means_pow = torch.pow(vid_means,powers)
-        #print(powers)
-        amb_pol = (amb*vid_means_pow).sum(dim=1)
 
-        #print("diff",amb_pol[0])
+        amb_pol = (amb*vid_means_pow).sum(dim=1)
 
         amb_sq = torch.pow(amb_pol,2)
         amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
         incon_sq = torch.pow(torch.sigmoid(self.incons),2)
         incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
 
-        #print("diff",amb_sq[0,0],"incons",incon_sq[0,0])
         return amb_sq+incon_sq
 
     def trueScoresBiasMatrix(self):
+        '''Computes the means of the raw score distributions according to the model.
+
+        The result is a matrix where each cell is the mean of a raw score density
+
+        '''
 
         #Matrix containing the sum of all (video_scor,annot_bias) possible pairs
         scor = self.trueScores.unsqueeze(1).expand(self.videoNb,self.annotNb)
         bias = self.bias.unsqueeze(0).expand(self.videoNb, self.annotNb)
         return scor+bias
 
-    def setParams(self,annot_bias,annot_incons,video_amb,video_scor):
-
-        self.bias = nn.Parameter(annot_bias)
-        self.incons = nn.Parameter(annot_incons)
-        self.diffs = nn.Parameter(video_amb)
-        self.trueScores = nn.Parameter(video_scor)
-
-    def init_base(self,dataInt):
-
-        annot_bias = torch.zeros(dataInt.size(1))
-        #Use std to initialise inconsistency seems a bad idea.
-        #Even really consistent annotators can give score
-        #in a large range
-        data = dataInt.float()
-        annot_incons = data.std(dim=0)
-        vid_score = data.mean(dim=1)
-
-        #Computing initial values for video ambiguity
-
-        #data3D = data.view(self.distorNb,self.contentNb,self.annotNb).permute(1,0,2)
-        data3D = []
-        currInd = 0
-        video_ambTensor = torch.zeros(self.contentNb,self.polyDeg+1)
-
-        if dataInt.is_cuda:
-            annot_bias = annot_bias.cuda()
-            video_ambTensor = video_ambTensor.cuda()
-
-        for i in range(self.contentNb):
-
-            #The data for all videos made from this reference video
-            videoData = data[currInd:currInd+self.distorNbList[i]]
-            data3D.append(videoData)
-            currInd += self.distorNbList[i]
-            #print(data.mean(dim=0))
-            expanded_use_score_mean = data.mean(dim=0).unsqueeze(1).permute(1, 0).expand_as(videoData)
-            video_ambTensor[i,0] = torch.pow(videoData-expanded_use_score_mean,2).sum()/(self.annotNb*self.contentNb)
-            video_ambTensor[i,0] = torch.sqrt(video_ambTensor[i,0])
-
-        self.setParams(annot_bias,annot_incons,video_ambTensor,vid_score)
-
     def init(self,dataInt,datasetName,score_dis,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init):
+        ''' Initialise the parameters of the model using ground-truth or approximations only based on data
+        Args:
+            dataInt (torch.tensor): the score matrix to train on
+            datasetName (str): the dataset name (useful only if the dataset is artificial and if some parameters have to initialised with ground truth)
+            score_dis (str): the score distribution to use. Can be \'Beta\' or \'Normal\'.
+            paramNotGT (list): the name of parameters not initialised with ground truth but with approximations only based on data. The parameters will be
+                initialised in the same order they appear in this list.
+            true_scores_init (str): the name of the function to use to initialise true scores, if it is not initialised with ground truth
+            bias_init (str): same than true_scores_init, but with biases.
+            diffs_init (str): same than true_scores_init, but with difficulties.
+            incons_init (str): same than true_scores_init, but with inconsistencies.
+        '''
 
         paramNameList = list(self.state_dict().keys())
 
@@ -222,14 +218,28 @@ class MLE(nn.Module):
             setattr(self,key,nn.Parameter(tensor))
 
     def tsInitBase(self,dataInt):
+        ''' Compute the mean opinion score for each video. Can be used to initialise the true score vector using only data
+        Args:
+            dataInt (torch.tensor): the score matrix
+        '''
         return dataInt.float().mean(dim=1)
 
     def bInitBase(self,dataInt):
+        ''' Compute the mean of the difference between true scores and raw scores for every annotator.
+        Can be used to initialise the bias vector, like tsInitBase
+        Args:
+            dataInt (torch.tensor): the score matrix
+        '''
+
         return (dataInt.float()-self.trueScores.unsqueeze(1).expand_as(dataInt)).mean(dim=0)
 
     def dInitBase(self,dataInt):
+        '''Compute the standard deviation of scores given to every content.
+        Can be used to initialise the difficulties vector, like tsInitBase
+        Args:
+            dataInt (torch.tensor): the score matrix
+        '''
 
-        #video_amb = torch.sqrt(torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2).mean(dim=1))
         video_amb = torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2).mean(dim=1)
 
         content_amb = torch.zeros(len(self.distorNbList)*(self.polyDeg+1))
@@ -240,16 +250,29 @@ class MLE(nn.Module):
             content_amb[i] = torch.sqrt(video_amb[sumInd:sumInd+self.distorNbList[i]].mean())
             sumInd += self.distorNbList[i]
 
+        #Clamping because std of data can be bigger than 1 and for numerical stability
         return torch.clamp(content_amb,0.01,0.99)
 
     def iInitBase(self,dataInt):
+        '''Compute the standard deviation of scores given by every annotators.
+        Can be used to initialise the inconsistency vector, like tsInitBase
+        Args:
+            dataInt (torch.tensor): the score matrix
+        '''
 
         res = torch.sqrt((torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2)).mean(dim=0))
+        #Clamping because std of data can be bigger than 1 and for numerical stability
         res = torch.clamp(res,0.01,0.99)
 
         return res
 
     def updateEmpirical(self):
+        '''Update the empirical prior.
+
+        Compute the mean and variance of the four vector of parameters (true scores, biases, inconsistencies and difficulties),
+        and use those means and variances as prior for the next iterations.
+
+        '''
 
         self.bias  = torch.cat((self.bias_freez,self.bias_opti),dim=0)
         self.incons  = torch.cat((self.incons_freez,self.incons_opti),dim=0)
@@ -267,17 +290,38 @@ class MLE(nn.Module):
                 self.disDict[key] = Beta(alpha, beta)
 
     def empiricalPrior(self,loss):
-        #print("Adding prior term")
+        ''' Add the prior terms for the empirical prior
+        Args:
+            loss (torch.Tensor): the loss
+        Returns
+            the loss with the prior terms added
+        '''
+
         for param in self.disDict.keys():
             procFunc = self.paramProc[param]
+            #Apply a preprocessing function (like sigmoid for the inconsistencies and difficulties) and computes the log prob.
             loss -= self.disDict[param].log_prob(procFunc(getattr(self,param+"_opti"))).sum()
 
         return loss
 
     def unifPrior(self,loss):
+        ''' The uniform prior
+        Args:
+            loss (torch.Tensor): the loss
+        Returns
+            the unchanged loss'''
+        return loss
         return loss
 
     def oraclePrior(self,loss):
+        ''' Add the prior terms for the oracle prior
+        The oracle prior uses ground-truth parameters of the dataset, which should be artificial.
+        Args:
+            loss (torch.Tensor): the loss
+        Returns
+            the loss with the prior terms added
+        '''
+
         for param in self.disDict.keys():
             procFunc = self.paramProc[param]
             loss -= self.disDict[param].log_prob(procFunc(getattr(self,param+"_opti"))).sum()
@@ -285,6 +329,18 @@ class MLE(nn.Module):
         return loss
 
     def setPrior(self,priorName,dataset):
+        ''' Set the desired prior
+
+        This function prepare the preprocessing functions (also reads the ground-truth parameters if the prior is and oracle)
+
+        Args:
+            priorName (str): the name of the prior desired. Can be :
+            - uniform : the prior is uniform for all parameters (i.e. no prior)
+            - oracle_bias : the prior is uniform for all parameters except the biases where it uses the ground truth
+            - oracle : the prior uses the ground truth parameters
+            - empirical : the prior is updated with the parameters means and variances found during optimisation
+        '''
+
 
         self.priorName = priorName
         if priorName == "empirical":
@@ -338,10 +394,20 @@ class MLE(nn.Module):
             raise ValueError("No such prior : {}".format(priorName))
 
     def getFlatParam(self):
+        ''' Return a vector with the four parameters vector concatenated (true scores, biases, inconsistencies and difficulties) '''
 
         return torch.cat((self.trueScores,self.bias,self.incons.view(-1),self.diffs.view(-1)),dim=0)
 
 def subRej(dataTorch):
+    ''' Creates a list of subject to reject based on how far they are from average answer. Comes from ITU-R BT.500: Methodology for the Subjective Assessment of the Quality of
+        Television Pictures. [Online]. Available: https://www.itu.int/rec/R-REC-BT.500
+
+        Args:
+            dataTorch (torch.tensor): the score matrix
+        Returns:
+            the list of subjects to reject indexs
+
+    '''
 
     if dataTorch.is_cuda:
         dataTorch = dataTorch.cpu()
@@ -376,6 +442,14 @@ def subRej(dataTorch):
     return rejList
 
 def removeColumns(data,removeList):
+    ''' Removes columns from the score matrix
+    Args:
+        data (torch.tensor): the score matrix
+        removeList (list): the list of column indexs to remove
+    Returns:
+        The score matrix with the chosen columns removed
+
+    '''
 
     data_rm = torch.zeros(data.size(0),data.size(1)-len(removeList))
     colCount = 0
@@ -386,6 +460,16 @@ def removeColumns(data,removeList):
     return data_rm
 
 def MOS(dataInt,z_score,sub_rej):
+    ''' Computes the mean opinion score (MOS) and the standard deviation of opinion scores (SOS) for every video
+
+    Args:
+        data (torch.tensor): the score matrix
+        z_score (bool): whether or not to compute z-scoring as preprocessing
+        sub_rej (bool): whether or not to use the subjecti rejection algorithm
+    Returns
+        the MOS and the SOS
+
+    '''
 
     data = dataInt.float()
 
@@ -403,7 +487,7 @@ def MOS(dataInt,z_score,sub_rej):
         data = (data-mean_sub)/std_sub
 
     mos_mean = data.mean(dim=1)
-    mos_conf = 1.96*data.std(dim=1)/math.sqrt(data.size(1))
+    mos_conf = data.std(dim=1)
 
     if mos_mean.is_cuda:
         mos_mean = mos_mean.cpu()
@@ -414,14 +498,23 @@ def MOS(dataInt,z_score,sub_rej):
 def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ):
     '''Build a model
     Args:
-        annot_nb (int): the bumber of annotators
-        nbVideos (int): the number of videos in the dataset
-        distorNbList (list): the number of distortion video for each reference video in the dataset
+        annot_nb (int): the number of annotators
+        nbVideos (int): the total number of video
+        distorNbList (list): the number of videos for each reference videos, in the same order than in the dataset.
+        polyDeg (int): the degree of the polynom used to model video ambiguities. E.g. 0 makes the video ambiguity depends only on the content
+
+        scoresDis (str): the score distribution used
+        score_min (int): the minimum score that can be given to a video
+        score_max (int): the maximum score that can be given to a video
+
+        div_beta_var (int): the factor with which to reduce the variance of the beta distribution, to ensure numerical stability.
+        priorUpdateFrequ (int): the number of epoch to wait before updating the empirical prior. Ignored if the empirical prior is not used.
+
     Returns:
         the built model
     '''
 
-    model = MLE(nbVideos,len(distorNbList),annot_nb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ)
+    model = MLE(nbVideos,annot_nb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ)
     return model
 
 if __name__ == '__main__':
