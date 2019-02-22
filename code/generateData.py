@@ -79,6 +79,8 @@ def main(argv=None):
         colors = cm.rainbow(np.linspace(0, 1, nb_videos))
 
         markers = [m for m, func in Line2D.markers.items() if func != 'nothing' and m not in Line2D.filled_markers]
+        if args.nb_annot == 5:
+            markers = [".",",","v","1","s"]
         if len(markers) < args.nb_annot:
             markers = ["" for i in range(args.nb_annot)]
         else:
@@ -131,12 +133,28 @@ def main(argv=None):
 
                 cdf = lambda x: torch.exp(scoresDis.log_prob(x))
                 #print("video",i,"annot",j)
-                plt.plot(x_coord.numpy(),cdf(x_coord).cpu().detach().numpy()[0],color=colors[i],marker=markers[j])
 
+                plt.plot(x_coord.numpy(),cdf(x_coord).cpu().detach().numpy()[0],color=colors[i],marker=markers[j])
 
                 meanList.append(mean)
 
                 scores[i,j] = postProcessingFunc(scores[i,j])
+
+            #Plot score histograms
+            scoreNorm = (scores[i] - args.score_min)/(args.score_max+1-args.score_min)
+            plt.hist(scoreNorm,color=colors[i],width=1/(args.score_max-args.score_min+1),alpha=0.5,range=(0,1))
+
+        #Plot the legend
+        handlesVid = []
+        for i in range(nb_videos):
+            handlesVid += plt.plot((0,0),marker='',color=colors[i],label=i)
+        legVid = plt.legend(handles=handlesVid, loc='upper right' ,title="Videos")
+        plt.gca().add_artist(legVid)
+        handlesAnnot = []
+        for j in range(args.nb_annot):
+            handlesAnnot += plt.plot((0,0),marker=markers[j],color="black",label=j)
+        legAnnot = plt.legend(handles=handlesAnnot, loc='lower right' ,title="Annotators")
+        plt.gca().add_artist(legAnnot)
 
         plt.savefig("../vis/{}_scoreDis.png".format(args.dataset_id))
 
