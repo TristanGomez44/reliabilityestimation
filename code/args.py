@@ -101,7 +101,7 @@ class ArgReader():
         self.parser.add_argument('--momentum', type=float, metavar='M',
                             help='SGD momentum')
         self.parser.add_argument('--seed', type=int, metavar='S',
-                            help='random seed')
+                            help='Seed used to initialise the random number generator.')
         self.parser.add_argument('--log_interval', type=int, metavar='N',
                             help='how many epochs to train before logging training status')
 
@@ -115,26 +115,10 @@ class ArgReader():
         self.parser.add_argument('--poly_deg', type=int, metavar='S',
                             help='The polynomial degree to use to model video ambiguity as a function of video mean score')
 
-        self.parser.add_argument('--erase_results', type=str2bool, metavar='S',
-                            help='To erase the convergence speed results already computed')
         self.parser.add_argument('--cuda', type=str2bool, metavar='S',
                             help='To run computations on the gpu')
         self.parser.add_argument('--optim', type=str, metavar='OPTIM',
-                            help='the optimizer algorithm to use (default: \'GD\')')
-        self.parser.add_argument('--rob_param', type=str, metavar='S',
-                            help='The name of the parameter to vary during \
-                                 robustness evaluation. Can be \'nb_annot\' or \'nb_corr\'')
-
-        self.parser.add_argument('--rob_param_values', type=str2FloatList, nargs='+',metavar='V',
-                            help='The values the varying parameter has to have during robustness evaluation')
-
-        self.parser.add_argument('--nb_rep', type=int, metavar='S',
-                            help='The number of repetition for each parameter value')
-
-        self.parser.add_argument('--model_param', type=str,metavar='P',
-                            help='The model parameter to vary during robustness evaluation')
-        self.parser.add_argument('--model_values', type=str2FloatList, nargs='+',metavar='V',
-                            help='The values the varying model parameter has to have during robustness evaluation')
+                            help='the optimizer to use (default: \'GD\')')
 
         self.parser.add_argument('--start_mode', type=str,metavar='SM',
                     help='The mode to use to initialise the model. Can be \'init\' or \'fine_tune\'.')
@@ -169,10 +153,6 @@ class ArgReader():
 
         self.parser.add_argument('--note', type=str,metavar='NOTE',
                             help="A note on the model")
-
-        self.parser.add_argument('--norm_sum', type=str2bool, metavar='S',
-                            help='To add the sum of the prob for all possible labels in the loss function. This is a term to minimise.\
-                                When using integer scores, this term should be used to compute correctly the probability of a score.')
 
         self.parser.add_argument('--score_dis', type=str, metavar='S',
                             help='The distribution to use to model the scores')
