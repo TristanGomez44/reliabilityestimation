@@ -52,6 +52,7 @@ def main(argv=None):
     if args.cuda:
         torch.cuda.manual_seed(args.seed)
 
+    #Case where the dataset is created from scratch
     if not args.init_from:
 
         #Write the arguments in a config file so the experiment can be re-run
@@ -174,9 +175,10 @@ def main(argv=None):
 
         print("Finished generating {}".format(args.dataset_id))
 
+    #Case where the dataset is created from removing lines or columns from an existing dataset (artificial or not)
     else:
 
-        #Write the arguments in a config file so the experiment can be re-run if the original dataset is artificial
+        #Write the arguments in a config file
         argreader.writeConfigFile("../data/{}{}.ini".format(args.init_from,args.dataset_id))
 
         #The number of contents of the old dataset:
@@ -205,6 +207,8 @@ def main(argv=None):
 
             trueScores = np.genfromtxt("../data/{}_trueScores.csv".format(args.init_from),delimiter="\t")
 
+            #Reshaping the true score vector as a 2D tensor with shape (NB_CONTENT,NB_VIDEOS_PER_CONTENT)
+            #With sush a shape, it is easy to remove all videos corresponding to specific contents
             if constantVideoPerRef:
                 trueScores = trueScores.reshape(nb_content_old,nb_video_per_content_old)
                 trueScores = trueScores[:args.nb_content,:args.nb_video_per_content]
@@ -225,6 +229,8 @@ def main(argv=None):
         scores = np.genfromtxt("../data/{}_scores.csv".format(args.init_from),delimiter="\t",dtype=str)
         scores[:,2:] = np.transpose(np.transpose(scores[:,2:])[perm])
 
+        #Reshaping the matrix score as a 3D tensor with shape (NB_CONTENT,NB_VIDEOS_PER_CONTENT,NB_ANNOTATORS)
+        #With sush a shape, it is easy to remove all videos corresponding to specific contents
         if constantVideoPerRef:
             scores = scores[1:].reshape(nb_content_old,nb_video_per_content_old,nb_annot_old+2)
             scores = scores[:args.nb_content,:args.nb_video_per_content,:args.nb_annot+2]
@@ -239,10 +245,17 @@ def main(argv=None):
         print("Finished generating {}{}".format(args.init_from,args.dataset_id))
 
 def meanvar_to_alphabeta(mean,var):
+    ''' Compute alpha and beta parameters of a beta distribution having some mean and variance
 
-    #print(torch.pow(mean,2))
+    Args:
+        mean (float): the mean of the beta distribution
+        var (float): the variance of the beta distribution
+    Returns:
+        the alpha and beta parameters of the beta distribution
+     '''
+
     alpha = ((1-mean)/var-1/mean)*torch.pow(mean,2)
-    #print(alpha)
+
     beta = alpha*(1/mean-1)
 
     return alpha,beta
@@ -251,13 +264,34 @@ def identity(x,score_min,score_max):
     return x
 
 def betaNormalize(x,score_min,score_max):
+    ''' Normalize scores between 1 and 5 to score between 0 and 1
+    Args:
+        x (torch.tensor or numpy.array): the value to normalise
+        score_min (int): the mininmum unnormalised score
+        score_max (int): the maximum unnormalised score
+    Returns:
+        the scores normalised
+    '''
 
+    #The 0.1 value helps for numerical stability, because beta distribution can go up to
+    #plus infinity when x goes to 0 or 1
     low = score_min-0.1
     high = score_max+0.1
 
     return (x-low)/(high-low)
 
 def betaDenormalize(x,score_min,score_max):
+    ''' Un-normalize scores between 0 and 1 to score between 1 and 5
+    Args:
+        x (torch.tensor or numpy.array): the value to un-normalise
+        score_min (int): the mininmum unnormalised score
+        score_max (int): the maximum unnormalised score
+    Returns:
+        the scores un-normalized
+    '''
+
+    #The 0.1 value helps for numerical stability, because beta distribution can go up to
+    #plus infinity when x goes to 0 or 1
     low = score_min-0.1
     high = score_max+0.1
     return x*(high-low)+low

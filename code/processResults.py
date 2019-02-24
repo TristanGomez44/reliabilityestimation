@@ -32,7 +32,20 @@ from sklearn.decomposition import PCA
 
 paramKeys = ["bias","incons","diffs","trueScores"]
 
+baselinesTypes = ['mos','sr_mos','zs_sr_mos']
+
 def agregate(pairList):
+    ''' Takes a list of pairs (number of annotators, error) and agregate the pairs having the same number of annotators
+
+    The aggregation process consists to computing the mean and the variance of all pairs with same nb of annotators.
+
+    Args:
+        pairList (list): a list of pairs (number of annotators, error) giving the error of several models with several annotator number
+    Returns
+        The list of distinct annotator number values met during the list parsing
+        The list of error mean for each of those distinct values
+        The list of error variance for each of those distinct values
+    '''
 
     nbAnnotAgreg = []
     ymeans = []
@@ -54,12 +67,20 @@ def agregate(pairList):
 
     ymeans.append(np.array(errToAgreg).mean())
     yerr.append(np.array(errToAgreg).std())
-    #errToAgreg = [err[0]]
-    #nbAnnotAgreg = [nb_annot[0]]
 
     return nbAnnotAgreg,ymeans,yerr
 
 def baseLineError(datasetName,baseLineRefDict,baselineName):
+    ''' Compute baselines method and evaluate them by comparing them to some reference
+
+    Args:
+        datasetName (str): the name of the dataset to compute baselines on
+        baseLineRefDict (dict): a dictionnary containing one reference vector for each type of baseline
+        baselineName (str): the type of baseline desired (can be 'mos','sr_mos' or 'zs_sr_mos'.)
+    Returns:
+        the error made by the chosen baseline method on the chosen dataset relative to the reference
+    '''
+
     dataset,_ = load_data.loadData(datasetName)
     baseline,_ = computeBaselines(dataset,baselineName)
 
@@ -68,25 +89,39 @@ def baseLineError(datasetName,baseLineRefDict,baselineName):
     return error
 
 def readConfFile(path,keyList):
+    ''' Read a config file and get the value of desired argument
+
+    Args:
+        path (str): the path to the config file
+        keyList (list): the list of argument to read name)
+    Returns:
+        the argument value, in the same order as in keyList
+    '''
 
     conf = configparser.ConfigParser()
     conf.read(path)
     conf = conf["default"]
     resList = []
     for key in keyList:
-        try:
-            resList.append(conf[key])
-        except KeyError:
-            pass
+        resList.append(conf[key])
 
     return resList
 
 def convSpeed(exp_id,refModelIdList,refModelSeedList,varParamList):
+    ''' Plot the distance between the vector found by models on subdatasets and the vector found by those same models on the full datasets
+
+    The distance is plot as a function of the annotator number.
+    Some parameters can be varying among models (e.g. the score distribution, the learning rate). One curve is draws for each combination of those parameters.
+
+    Args:
+        exp_id (str): the experience name
+        refModelIdList (list): the list of ids of models which are trained on a full dataset
+        refModelSeedList (list): the list of seeds of models which are trained on a full dataset
+        varParamList (list): the list of parameters which are varying among all the models in the experiment
+    '''
 
     modelConfigPaths = sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)
     modelIds = list(map(lambda x:findNumbers(os.path.basename(x)),modelConfigPaths))
-
-    baselinesTypes = ['mos','sr_mos','zs_sr_mos']
 
     #Collect the scores of each reference model
     refTrueScoresDict = {}
@@ -216,53 +251,44 @@ def convSpeed(exp_id,refModelIdList,refModelSeedList,varParamList):
     plt.savefig("../vis/{}/convSpeed_{}.png".format(exp_id,exp_id))
 
 def lookInModelAndData(modelConfigPath,key,typeVal=float):
+    ''' Look for a parameter if the model config file and in the dataset config file
+
+    If the parameters is not found in the model config file, its searches in the config file of the model dataset
+    Args:
+        modelConfigPath (str): the path to the config file of the model
+        key (str): the name of the parameter to find
+        typeVal (class): the type of the parameter
+    Returns:
+        the value of the parameter
+    '''
 
     if key != "nb_videos":
-        res = readConfFile(modelConfigPath,[key])
-        if len(res) == 0:
+
+        try:
+            res = readConfFile(modelConfigPath,[key])
+            return typeVal(res[0])
+        except KeyError:
             datasetName = readConfFile(modelConfigPath,["dataset"])[0]
             value = readConfFile("../data/{}.ini".format(datasetName),[key])[0]
             return typeVal(value)
-        else:
-            return typeVal(res[0])
+
     else:
         datasetName = readConfFile(modelConfigPath,["dataset"])[0]
         nb_content,nb_video_per_content = readConfFile("../data/{}.ini".format(datasetName),["nb_content","nb_video_per_content"])
         return int(nb_content)*int(nb_video_per_content)
 
-def distHeatMap(exp_id,params,param1,param2,minLog=0,maxLog=10,nbStep=100,nbEpochsMean=10):
-
-    configFiles = sorted(glob.glob("../models/{}/model*.ini".format(exp_id)),key=findNumbers)
-
-    colors = cm.plasma(np.linspace(0, 1,nbStep))
-
-    for i,configFile in enumerate(configFiles):
-
-        param1Value = lookInModelAndData(configFile,param1)
-        param2Value = lookInModelAndData(configFile,param2)
-
-        distFilePath = "../results/{}/model{}_dist.csv".format(exp_id,findNumbers(os.path.basename(configFile)))
-        distFile = np.genfromtxt(distFilePath,delimiter=",",dtype=str)
-        header = distFile[0]
-        distFile = distFile[1:].astype(float) + 1e-9
-
-        for j in range(distFile.shape[1]):
-
-            if header[j] in params:
-                plt.figure(j)
-                plt.xlabel(param1)
-                plt.ylabel(param2)
-
-                neg_log_dist = -np.log10(distFile[-nbEpochsMean:,j].mean())
-                color = colors[int(nbStep*neg_log_dist/maxLog)]
-
-                plt.scatter(float(param1Value),float(param2Value),color=color,s=400)
-
-                if i==len(configFiles)-1:
-                    plt.savefig("../vis/{}/distHeatMap_{}.png".format(exp_id,header[j]))
-                    plt.close()
-
 def twoDimRepr(exp_id,model_id,start_epoch,paramPlot,plotRange):
+    ''' Plot parameters trajectory across training epochs of a model.
+
+    The trajectories are ploted using t-sne and PCA representation
+
+    Args:
+        exp_id (str): the experience name
+        model_id (str): the model id
+        start_epoch (int): the epoch at which to start the plot
+        paramPlot (list): the parameters to plot (can be \'trueScores\', \'bias\', \'incons\' or \'diffs\'.)
+        plotRange (list): the axis limits to use. It should be a list of values like this (xMin,xMax,yMin,yMax).
+    '''
 
     def getEpoch(path):
         return findNumbers(os.path.basename(path).replace("model{}".format(model_id),""))
@@ -293,7 +319,16 @@ def twoDimRepr(exp_id,model_id,start_epoch,paramPlot,plotRange):
             plt.ylim(plotRange[2],plotRange[3])
         plt.savefig("../vis/{}/model{}_{}_pca.png".format(exp_id,model_id,key))
 
-def plotDistNLL(exp_id,ind_list,startEpoch,endEpoch,plotRange):
+def plotDist(exp_id,model_id,startEpoch,endEpoch,plotRange):
+    ''' Plot the distance traveled by model parameters across epochs.
+
+    Args:
+        exp_id (str): the experience name
+        model_id (str): the model id to plot
+        startEpoch (int): the epoch at which to start the plot
+        endEpoch (int): the epoch at which to end the plot
+        plotRange (list): the y-axis limits to use. It should be a pair of values like this (yMin,yMax).
+    '''
 
     colors = cm.rainbow(np.linspace(0, 1, len(paramKeys)+1))
 
@@ -305,31 +340,16 @@ def plotDistNLL(exp_id,ind_list,startEpoch,endEpoch,plotRange):
 
     fig = plt.figure(figsize=(10,5))
     axDist = fig.add_subplot(111)
-    axNLL = axDist.twinx()
 
     axDist.set_yscale('log')
-    #axNLL.set_yscale("linear")
-    minLL = None
-    maxLL = None
 
-    for i,ind in enumerate(ind_list):
-        distArray = np.genfromtxt("../results/{}/model{}_dist.csv".format(exp_id,ind),delimiter=",",dtype=str)
+        distArray = np.genfromtxt("../results/{}/model{}_dist.csv".format(exp_id,model_id),delimiter=",",dtype=str)
         header = distArray[0]
         distArray = distArray[1:].astype(float)
 
         for j,key in enumerate(header):
             if key != "all":
-                axDist.plot(distArray[startEpoch:endEpoch,j],label="model{} {}".format(ind,key),color=colors[j],marker=markers[i],alpha=0.5)
-
-        if os.path.exists("../results/{}/model{}_nll.csv".format(exp_id,ind)):
-            llArray = -np.genfromtxt("../results/{}/model{}_nll.csv".format(exp_id,ind),delimiter=",",dtype=float)
-
-            if (minLL is None or llArray[-100:].min() < minNLL):
-                minLL = llArray[-500:].min()
-            if (maxLL is None or llArray[-100:].max() > maxNLl):
-                maxLL = llArray[-500:].max()
-            #axNLL.plot(llArray[startEpoch:endEpoch,j],label="model{}".format(ind),color="black",marker=markers[i],alpha=0.5)
-
+                axDist.plot(distArray[startEpoch:endEpoch,j],label="model{} {}".format(model_id,key),color=colors[j],marker=markers[i],alpha=0.5)
 
     box = axDist.get_position()
     axDist.set_position([box.x0, box.y0, box.width * 0.8, box.height])
@@ -337,132 +357,21 @@ def plotDistNLL(exp_id,ind_list,startEpoch,endEpoch,plotRange):
     axDist.set_xticklabels(np.arange(startEpoch,endEpoch,25).astype(str))
     axDist.set_ylim(plotRange)
 
-    axNLL.set_position([box.x0, box.y0, box.width * 0.8, box.height])
-    axNLL.set_ylim(bottom=minLL,top=maxLL)
-
     fig.legend(loc='right',prop={'size': 10})
 
-    plt.savefig("../vis/{}/dist_nll_{}.png".format(exp_id,ind_list))
-
-def distrPlot(exp_id,indModel,plotScoreDis,nbPlot=10,dx=0.01):
-
-    modelConf = configparser.ConfigParser()
-    modelConf.read("../models/{}/model{}.ini".format(exp_id,indModel))
-    modelConf = modelConf['default']
-
-    datasetName = readConfFile("../models/{}/model{}.ini".format(exp_id,indModel),["dataset"])[0]
-
-    xInt,distorNbList = load_data.loadData(datasetName)
-
-    #Building the model
-    model = modelBuilder.modelMaker(xInt.size(1),len(xInt),distorNbList,int(modelConf["poly_deg"]),modelConf["score_dis"],\
-                                    int(modelConf["score_min"]),int(modelConf["score_max"]),float(modelConf["div_beta_var"]), \
-                                    int(modelConf["nb_freez_truescores"]),int(modelConf["nb_freez_bias"]),int(modelConf["nb_freez_diffs"]),\
-                                    int(modelConf["nb_freez_incons"]))
-
-    paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)))
-
-    nb_annot,nb_content,nb_video_per_content = readConfFile("../data/{}.ini".format(datasetName),["nb_annot","nb_content","nb_video_per_content"])
-
-    tensorDict = {"bias":np.zeros((len(paramsPaths),int(nb_annot))),\
-                  "incons":np.zeros((len(paramsPaths),int(nb_annot))),\
-                  "diffs":np.zeros((len(paramsPaths),int(nb_content))),\
-                  "trueScores":np.zeros((len(paramsPaths),int(nb_video_per_content)*int(nb_content)))}
-
-    indexs = np.random.choice(range(xInt.size(1)),size=nbPlot)
-    vidIndex = np.random.choice(range(xInt.size(0)),size=1)[0]
-
-    if plotScoreDis:
-
-        colors = cm.rainbow(np.linspace(0, 1, xInt.size(0)))
-        markers = [m for m, func in Line2D.markers.items() if func != 'nothing' and m not in Line2D.filled_markers]
-        if len(markers) < nbPlot:
-            markers = ["" for i in range(xInt.size(1))]
-        else:
-            markers = markers[:xInt.size(1)]
-
-        maxCdfs=0
-        cdfsList = torch.zeros((len(paramsPaths),nbPlot,int(1/dx)+1))
-        for i,paramsPath in enumerate(paramsPaths):
-
-            epoch = findNumbers(os.path.basename(paramsPath).replace("model{}".format(indModel),""))
-            print("Processing epoch",epoch)
-
-            model.load_state_dict(torch.load(paramsPath))
-
-            scoreDis = model.compScoreDis(xInt.is_cuda)
-
-            cdf = lambda x: torch.exp(scoreDis.log_prob(x))
-            x_coord = torch.arange(0,1,dx)
-            cdfs = cdf(x_coord)
-
-            cdfs = cdfs[vidIndex,indexs]
-
-            #cdfs = cdfs.view(cdfs.size(0)*cdfs.size(1),cdfs.size(2))
-            #cdfs = cdfs[indexs]
-
-            if cdfs[:,5:-5].max() > maxCdfs:
-                maxCdfs = cdfs[:,5:-5].max()
-            cdfsList[i] = cdfs
-
-        #Wrinting the images with the correct range
-        for i,paramsPath in enumerate(paramsPaths):
-
-            epoch = findNumbers(os.path.basename(paramsPath).replace("model{}".format(indModel),""))
-            plt.figure(i)
-            subplot = plt.subplot(2,1,1)
-
-            subplot.set_ylim((0,maxCdfs.item()))
-            for j,(k,cdf) in enumerate(zip(indexs,cdfs)):
-                subplot.plot(x_coord.numpy(),cdfsList[i,j].detach().numpy(),color=colors[vidIndex],marker=markers[j])
-
-            subplot = plt.subplot(2,1,2)
-            subplot.hist(generateData.betaNormalize(xInt[vidIndex].detach().numpy(),int(modelConf["score_min"]),int(modelConf["score_max"])),color=colors[vidIndex],range=(0,1))
-
-            plt.savefig("../vis/{}/scores_{}_epoch{}.png".format(exp_id,indModel,epoch))
-            plt.close()
-
-    for key in paramKeys:
-        tensorPathList = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,indModel,key)),key=findNumbers)
-        for i,tensorPath in enumerate(tensorPathList):
-            tensorDict[key][i] = np.genfromtxt(tensorPath)[:,0].reshape(-1)
-
-    xRangeDict = {}
-    #Plot the distribution of the parameters
-    for i,key in enumerate(paramKeys):
-        xMin = np.min(tensorDict[key])
-        xMax = np.max(tensorDict[key])
-
-        if key=="bias":
-            if np.abs(xMin) > xMax:
-                maxVal = np.abs(xMin)
-            else:
-                maxVal = xMax
-            xRangeDict[key] = (-maxVal,maxVal)
-        else:
-            xRangeDict[key] = (xMin,xMax)
-
-        for j in range(len(tensorDict[key])):
-            plt.figure(i+j*len(paramKeys)+len(paramsPaths),figsize=(10,5))
-            plt.title(key)
-
-            #Plot ground truth distribution
-            subplot = plt.subplot(2,1,1)
-            subplot.set_xlim(xRangeDict[key])
-            subplot.set_ylim(0,len(tensorDict[key][j])*0.5)
-            subplot.hist(np.genfromtxt("../data/{}_{}.csv".format(datasetName,key)),range=xRangeDict[key],color="red")
-
-            #Plot predicted distribution
-            subplot = plt.subplot(2,1,2)
-            subplot.set_xlim(xRangeDict[key])
-            subplot.set_ylim(0,len(tensorDict[key][j])*0.5)
-            subplot.hist(tensorDict[key][j],range=xRangeDict[key],color="blue")
-
-            epoch = findNumbers(os.path.basename(paramsPaths[j]).replace("model{}".format(indModel),""))
-            plt.savefig("../vis/{}/{}_{}_epoch{}.png".format(exp_id,key,indModel,epoch))
-            plt.close()
+    plt.savefig("../vis/{}/dist_{}.png".format(exp_id,model_id))
 
 def plotParam(dataset,exp_id,indList):
+    ''' Plot the parameters found by models against a the ground truth parameters
+
+    It produces a scatter plot where the x-axis represents the ground-truth values and the y-axis represents the value found by models.
+    This plot is produced for every epoch for which the model had its parameters saved during training
+
+    Args:
+        dataset (str): the dataset name. The dataset should be artificial because this plot requires ground truth parameters.
+        exp_id (str): the experience name.
+        indList (list): the list of model ids to plot
+    '''
 
     paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indList[0])))
     colors = cm.rainbow(np.linspace(0, 1,len(indList)))
@@ -494,25 +403,7 @@ def plotParam(dataset,exp_id,indList):
                 epoch = findNumbers(os.path.basename(paramsPaths[j]).replace("model{}".format(indModel),""))
                 param_gt = np.genfromtxt("../data/{}_{}.csv".format(dataset,key))
 
-                plt.figure(2*j,figsize=(10,5))
-                #error = (np.abs(param_gt-tensor[k,j])/np.abs(param_gt))
-                #error = (param_gt-tensor[k,j])/np.abs(param_gt)
-                error = np.sqrt(np.power(param_gt-tensor[k,j],2)/len(param_gt))
-                if np.max(error) > maxErr:
-                    maxErr = np.max(error)
-
-                plt.xlim(xRangeDict)
-                plt.plot(tensor[k,j],error,"*",label=indModel,color=colors[k])
-
-                x = np.arange(xRangeDict[0],xRangeDict[1],0.01)
-                plt.plot(x,np.zeros_like(x))
-                if k==len(indList)-1:
-                    plt.ylim(0,maxErr)
-                    plt.legend()
-                    plt.savefig("../vis/{}/model{}_{}Error_epoch{}.png".format(exp_id,indList,key,epoch))
-                    plt.close()
-
-                plt.figure(2*j+1,figsize=(10,5))
+                plt.figure(j,figsize=(10,5))
                 plt.plot(param_gt,tensor[k,j],"*",label=indModel,color=colors[k])
                 x = np.arange(xRangeDict[0],xRangeDict[1],0.01)
                 plt.plot(x,x)
@@ -525,28 +416,16 @@ def plotParam(dataset,exp_id,indList):
                     plt.savefig("../vis/{}/model{}_{}VSgt_epoch{}_.png".format(exp_id,indList,key,epoch))
                     plt.close()
 
-def scatterPlot(dataset,exp_id,indModel):
-
-    plt.figure()
-
-    trueScores_gt = np.genfromtxt("../data/"+dataset+"_trueScores.csv")
-
-    modelConf = configparser.ConfigParser()
-    modelConf.read("../models/{}/model{}.ini".format(exp_id,indModel))
-    modelConf = modelConf['default']
-
-    trueScoresPathList = sorted(glob.glob("../results/{}/model{}_epoch*_trueScores.csv".format(exp_id,indModel)),key=findNumbers)
-    colors = cm.rainbow(np.linspace(0, 1, len(trueScoresPathList)))
-
-    for i,trueScoresPath in enumerate(trueScoresPathList):
-        trueScores = np.genfromtxt(trueScoresPath)
-        epoch = findNumbers(os.path.basename(trueScoresPath).replace("model{}".format(indModel),""))
-        plt.plot(trueScores[:,0],trueScores_gt,"*",label="epoch{}".format(epoch),color=colors[i])
-
-    plt.legend()
-    plt.savefig("../vis/{}/scatterPlot_{}.png".format(exp_id,indModel))
-
 def fakeDataDIstr(args):
+    ''' Plot empirical and real distribution of an artificial dataset ground-truth parameters.
+
+    For each of the four parameter vector (true scores, biases, inconsistencies and difficulties),
+    it plots the real density and the emirical distribution of the same figure.
+
+    Args:
+        args (namespace): the namespace collected in the begining of the script containing all arguments about model training and evaluation.
+    '''
+
 
     dataConf = configparser.ConfigParser()
     dataConf.read("../data/{}.ini".format(args.dataset))
@@ -580,56 +459,50 @@ def fakeDataDIstr(args):
         plt.legend()
         plt.savefig("../vis/{}_{}_dis.png".format(args.dataset,paramName))
 
-def std(data,distorNbList,dataset):
-
-    #cmap = cm.get_cmap(name='rainbow')
-    colors = cm.rainbow(np.linspace(0, 1, len(distorNbList)))
-
-    plt.figure()
-    currInd = 0
-    stds_mean = torch.zeros(len(distorNbList))
-    stds_confInter = torch.zeros(len(distorNbList))
-    for i in range(len(distorNbList)):
-
-        #The data for all videos made from this reference video
-        videoData = data[currInd:currInd+distorNbList[i]]
-        currInd += distorNbList[i]
-
-        stds = videoData.std(dim=1)
-        stds_mean[i] = stds.mean()
-        stds_confInter[i] = 1.96*stds.std()/math.sqrt(distorNbList[i])
-
-        plt.errorbar([i],stds_mean[i].numpy(), yerr=stds_confInter[i].numpy(), fmt="*",color=colors[i])
-
-    plt.ylim([0,max(stds_mean.numpy())*1.2])
-
-    plt.savefig("../vis/stds_{}.png".format(dataset))
-
 def computeBaselines(trainSet,baselineName):
+    ''' Run one baseline method on some dataset and returns the true scores vector produced
+
+    Args:
+        trainSet (torch.tensor): the score matrix
+        baselineName (str): the name of the baseline to compute
+    Returns
+        the true score vector found by the baselines and the corresponding confidence interval
+    '''
 
     if baselineName == "mos":
-        mean,std = modelBuilder.MOS(trainSet,sub_rej=False,z_score=False)
+        value,conf = modelBuilder.MOS(trainSet,sub_rej=False,z_score=False)
     elif baselineName == "sr_mos":
-        mean,std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=False)
+        value,conf = modelBuilder.MOS(trainSet,sub_rej=True,z_score=False)
     elif baselineName == "zs_sr_mos":
-        mean,std = modelBuilder.MOS(trainSet,sub_rej=True,z_score=True)
+        value,conf = modelBuilder.MOS(trainSet,sub_rej=True,z_score=True)
 
-    return mean,std
+    return value,conf
 
-def mean_std(model,loss):
-    mle_mean = model.video_scor
-    mle_std = 1.96/torch.sqrt(train_val.computeHessDiag(loss,mle_mean)[0])
-    return mle_mean,mle_std
+def computeConfInter(loss,vector):
+    ''' Computes the confidence interval of a vector values relative to the loss.
+    Args:
+        loss (torch.Tensor): the loss (used to compute confidence interval)
+        vector (torch.tensor): a vector tensor. One confidence interval will be computed on each element of the vector.
+    Returns:
+        a vector of confidence intervals
+    '''
 
-def computeConfInter(loss,tensor):
-
-    hessDiag,grad = train_val.computeHessDiag(loss,tensor)
+    hessDiag,grad = train_val.computeHessDiag(loss,vector)
 
     confInter = 1.96/torch.sqrt(hessDiag)
 
     return confInter
 
 def error(dictPred,dictGT,paramNames,errFunc):
+    ''' Compute the error made on the 4 parameter vectors
+    Args:
+        dictPred (dict): a dictionnary containing the four vector found by estimation
+        dictGT (dict): a dictionnary containing the four ground-truth parameters
+         paramNames (list): the list of the four parameter vectors name
+         errFunc (function): the function to use to compute the error (can be \'relative\' or \'rmse\')
+    Returns:
+        the list of error for each vector in the same order as in paramNames
+    '''
 
     errList = []
 
@@ -640,13 +513,39 @@ def error(dictPred,dictGT,paramNames,errFunc):
     return errList
 
 def relative(vec,vec_ref):
+    ''' Compute the relative error between two vector
+    Args:
+        vec (torc.tensor, numpy.array): the vector found by estimation
+        vec_ref (torch.tensor,numpy.array): the ground-truth vector
+    Returns:
+        the error value
+    '''
+
     return (np.abs(vec_ref-vec)/np.abs(vec_ref)).mean()
 
 def rmse(vec,vec_ref):
+    ''' Compute the rmse error between two vector
+    Args:
+        vec (torc.tensor, numpy.array): the vector found by estimation
+        vec_ref (torch.tensor,numpy.array): the ground-truth vector
+    Returns:
+        the error value
+    '''
 
     return np.sqrt(np.power(vec_ref-vec,2).sum()/len(vec))
 
 def errorVec(vec,vec_ref,errFunc):
+    ''' Compute the error between two vectors
+
+    This function takes care that the vector have the correct type on the correct hardware (cpu and not gpu).
+
+    Args:
+        vec (torc.tensor, numpy.array): the vector found by estimation
+        vec_ref (torch.tensor,numpy.array): the ground-truth vector
+        errFunc (function): the function to use to compute the error (can be \'relative\' or \'rmse\')
+    Returns:
+        the error value
+    '''
 
     if not (type(vec) is np.ndarray):
         if vec.is_cuda:
@@ -663,6 +562,14 @@ def errorVec(vec,vec_ref,errFunc):
         return errFunc(vec,vec_ref)
 
 def includPerc(dictPred,dictGT,paramNames):
+    ''' Compute the proportion of ground-truth vector included in the confidence interval of estimation for the four vectors
+    Args:
+        dictPred (dict): a dictionnary containing the four vector found by estimation
+        dictGT (dict): a dictionnary containing the four ground-truth parameters
+         paramNames (list): the list of the four parameter vectors name
+    Returns:
+        the list of vector proportion included in the confidence interval for each vector in the same order as in paramNames
+    '''
 
     inclList = []
 
@@ -672,21 +579,36 @@ def includPerc(dictPred,dictGT,paramNames):
     return inclList
 
 def includPercVec(mean,confIterv,gt):
+    ''' Compute the proportion of ground-truth vector included in the confidence interval of estimation for one vector
 
-    if len(mean) != len(gt):
-        return -1
-    else:
+    Args:
+        vec (torc.tensor, numpy.array): the vector found by estimation
+        vec_ref (torch.tensor,numpy.array): the ground-truth vector
+        errFunc (function): the function to use to compute the error (can be \'relative\' or \'rmse\')
+    Returns:
+        the error value
+    '''
 
-        includNb = ((mean - confIterv < gt)* (gt < mean + confIterv)).sum()
-        return includNb/len(mean)
+    includNb = ((mean - confIterv < gt)* (gt < mean + confIterv)).sum()
+    return includNb/len(mean)
 
 def extractParamName(path):
+    ''' Extract a parameter name from a csv path '''
 
     path = os.path.basename(path).replace(".csv","")
     return path[path.find("_")+1:]
 
 def getGT(dataset,gtParamDict,paramKeys):
+    ''' Read the dictionnary of ground-truth parameters for one dataset
+    Args:
+        dataset (str): the dataset name to read groundtruth of
+        gtParamDict (dict): the dictionnary containing previously read groundtruth dictionnaries
+        paramKeys (list): the list of vector parameters name (i.e. "trueScores", "bias", "diffs" and "incons")
+    Returns:
+        the dictionnary of ground truth parameters for the desired dataset
+    '''
 
+    #If the dataset ground truth have not been previously read
     if not dataset in gtParamDict.keys():
         gtParamDict[dataset] = {}
 
@@ -696,6 +618,16 @@ def getGT(dataset,gtParamDict,paramKeys):
     return gtParamDict[dataset]
 
 def compareWithGroundTruth(exp_id,varParams,error_metric):
+    ''' Compare the parameters found by several models to the ground truth
+
+    This function compute the error between parameter found and ground-truth but it also
+    compute the proportion of groundtruth parameters included in the confidence interval of estimated value
+
+    Args:
+        exp_id (str): the name of the experience
+        varParams (list): the list of meta-parameters varying during the experiment
+        error_metric (str): the name of the function to use to compute the error (can be \'rmse\' or \'relative\')
+    '''
 
     errFunc = globals()[error_metric]
 
@@ -745,6 +677,15 @@ def compareWithGroundTruth(exp_id,varParams,error_metric):
         print(csvInclu,file=text_file)
 
 def agregateCpWGroundTruth(exp_id,resFilePath):
+    ''' Agregate the results of a comparison with ground truth
+
+    This computes the mean and std of error (and inclusion percentage) made by the models with the same combination of varying parameters
+    (this combination value is indicated in the first column of the two files produced by the compareWithGroundTruth function.
+
+    Args:
+        exp_id (str): the experience name
+        resFilePath (str): the path to the csv file containing the performance of each separate models
+    '''
 
     #Agregating the results
     resFile = np.genfromtxt(resFilePath,delimiter="\t",dtype="str")
@@ -807,6 +748,17 @@ def agregateCpWGroundTruth(exp_id,resFilePath):
     ttest_matrix(groupedLines,exp_id,header,resFilePath)
 
 def ttest_matrix(groupedLines,exp_id,modelKeys,resFilePath):
+    ''' Computes the two sample t-test over groud of models
+
+    Each combination of meta-parameters is put against every other by computing the p value of the two sample t-test.
+
+    Args:
+        groupedLines (dict): a dictionnary containing the error (or inclusion percentage) of several models having the same combination of varying parameters
+        exp_id (str): the experience name
+        modelKeys (list): the list of the 4 parameter vectors (i.e. \'trueScores\', \'bias\', \'incons\' or \'diffs\'.)
+        resFilePath (str): the path to the csv file containing the performance of each separate models
+
+    '''
 
     keys = sorted(list(groupedLines.keys()))
 
@@ -911,8 +863,8 @@ def main(argv=None):
     if args.plot_param:
         plotParam(args.dataset,args.exp_id,args.plot_param)
 
-    if args.plot_dist_nll:
-        plotDistNLL(args.exp_id,args.plot_dist_nll[:len(args.plot_dist_nll)-2],args.plot_dist_nll[-2],args.plot_dist_nll[-1],args.plot_range_dist)
+    if args.plot_dist:
+        plotDist(args.exp_id,args.plot_dist_nll[0],args.plot_dist_nll[1],args.plot_dist_nll[2],args.plot_range_dist)
 
     if args.two_dim_repr:
         twoDimRepr(args.exp_id,int(args.two_dim_repr[0]),int(args.two_dim_repr[1]),args.two_dim_repr[2:],args.plot_range_pca)
@@ -922,23 +874,26 @@ def main(argv=None):
 
     if args.conv_speed:
 
+        #Collect the configuration files
         configFiles = glob.glob("../models/{}/model*.ini".format(args.exp_id))
 
-        def getProp(x):
+        def get_Seed_NbAnnot(x):
             datasetName = readConfFile(x,["dataset"])[0]
             seed,nb_annot = readConfFile("../data/{}.ini".format(datasetName),["seed","nb_annot"])
             return int(seed),int(nb_annot)
 
+        #Gets the ids, the seeds and the nb of annotators for every models in the experience
         ids = list(map(lambda x:findNumbers(os.path.basename(x)),configFiles))
-        seeds,nb_annots = zip(*list(map(getProp,configFiles)))
+        seeds,nb_annots = zip(*list(map(get_Seed_NbAnnot,configFiles)))
 
         ids_seeds_nbAnnots = zip(ids,seeds,nb_annots)
 
+        #Find the ids and seeds of models which are trained on the full dataset
         argmaxs = np.argwhere(nb_annots == np.amax(nb_annots)).flatten()
-
         ids = np.array(ids)[argmaxs]
         seeds = np.array(seeds)[argmaxs]
 
+        #Sort with the ids value to make debut easier
         ids,seeds = zip(*sorted(zip(ids,seeds),key=lambda x:x[0]))
 
         convSpeed(args.exp_id,ids,seeds,args.conv_speed)
