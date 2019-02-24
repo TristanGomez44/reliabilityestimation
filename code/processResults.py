@@ -799,20 +799,13 @@ def main(argv=None):
 
     argreader.parser.add_argument('--artif_data',action='store_true',help='To plot the real and empirical distribution of the parameters of a fake dataset. \
                                     The fake dataset to plot is set by the --dataset argument')
-    argreader.parser.add_argument('--distr_plot',type=int,help='To plot the distribution of each score for a given model. The argument value is the model id. \
-                                    The first argument should be the model id')
-    argreader.parser.add_argument('--param_distr_plot',type=int,help='Like --distr_plot but only plot the parameters distribution and not the scores distributions.')
-    argreader.parser.add_argument('--scatter_plot',type=int,help='To plot the real and predicted scores of a fake dataset in a 2D plot. \
-                                    The first argument should be the model id')
+
     argreader.parser.add_argument('--plot_param',type=str,nargs="*",help='To plot the error of every parameters at each epoch for each model. The argument values are the index of the models to plot.')
-    argreader.parser.add_argument('--plot_dist_nll',type=int,nargs="*",help='To plot the distance travelled by each parameters and the negative log-likelihood at each epoch. \
+    argreader.parser.add_argument('--plot_dist',type=int,nargs="*",help='To plot the distance travelled by each parameters and the negative log-likelihood at each epoch. \
                                     The argument values are the index of the models to plot. The two last arguments are the epochs at which to start and finish the plot.')
 
     argreader.parser.add_argument('--two_dim_repr',type=str,nargs="*",help='To plot the t-sne visualisation of the values taken by the parameters during training. \
                                     The first argument value is the id of the model to plot and the second is the start epoch. The following argument are the parameters to plot.')
-
-    argreader.parser.add_argument('--dist_heatmap',type=str,nargs="*",help='To plot the average distance travelled by parameters at the end of training for each model. The value of this argument is a list\
-                                    of parameters to plot and the two last value are the parameters to plot.')
 
     argreader.parser.add_argument('--conv_speed',type=str,nargs='*',metavar='ID',help='To plot the error as a function of the number of annotator. The value is a list of parameters varying between \
                                     the reference models.')
@@ -851,26 +844,14 @@ def main(argv=None):
     if args.artif_data:
         fakeDataDIstr(args)
 
-    if args.distr_plot:
-        distrPlot(args.exp_id,args.distr_plot,plotScoreDis=True)
-
-    if args.param_distr_plot:
-        distrPlot(args.exp_id,args.param_distr_plot,plotScoreDis=False)
-
-    if args.scatter_plot:
-        scatterPlot(args.dataset,args.exp_id,args.scatter_plot)
-
     if args.plot_param:
         plotParam(args.dataset,args.exp_id,args.plot_param)
 
     if args.plot_dist:
-        plotDist(args.exp_id,args.plot_dist_nll[0],args.plot_dist_nll[1],args.plot_dist_nll[2],args.plot_range_dist)
+        plotDist(args.exp_id,args.plot_dist[0],args.plot_dist[1],args.plot_dist[2],args.plot_range_dist)
 
     if args.two_dim_repr:
         twoDimRepr(args.exp_id,int(args.two_dim_repr[0]),int(args.two_dim_repr[1]),args.two_dim_repr[2:],args.plot_range_pca)
-
-    if args.dist_heatmap:
-        distHeatMap(args.exp_id,args.dist_heatmap[:-2],param1=args.dist_heatmap[-2],param2=args.dist_heatmap[-1])
 
     if args.conv_speed:
 
