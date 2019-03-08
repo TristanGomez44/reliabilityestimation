@@ -58,7 +58,7 @@ class GradNoise():
 
 def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
 
-    #confInterList = processResults.computeConfInter(loss,model)
+
     keys = list(model.state_dict().keys())
 
     for i,key in enumerate(keys):
@@ -78,59 +78,10 @@ def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
         concat = np.concatenate((tensor,confInterv),axis=1)
         np.savetxt("../results/{}/model{}_epoch{}_{}.csv".format(exp_id,ind_id,epoch,keys[i]),concat,delimiter="\t")
 
-def addLossTerms(loss,model,weight,normSum,cuda):
-    #print("Adding loss terms")
-    #print(loss)
+def addLossTerms(loss,model,weight):
+
     if weight>0:
-
         loss = weight*model.prior(loss)
-        #print(loss)
-    if normSum:
-
-        labels = torch.arange(1,6).unsqueeze(0).unsqueeze(0)
-
-        amb_incon = model.ambInconsMatrix(cuda)
-        amb_incon = amb_incon.unsqueeze(2).expand(amb_incon.size(0),amb_incon.size(1),labels.size(2))
-
-        scor_bias = model.trueScoresBiasMatrix()
-        scor_bias = scor_bias.unsqueeze(2).expand(scor_bias.size(0),scor_bias.size(1),labels.size(2))
-
-        labels = labels.expand(amb_incon.size(0),amb_incon.size(1),labels.size(2)).float()
-
-        if model.score_dis == "Normal":
-
-            exponents = -torch.pow(labels-scor_bias,2)/(amb_incon)
-            normSum = torch.logsumexp(exponents,dim=2).sum()
-
-        elif model.score_dis == "Beta":
-
-            labels = generateData.betaNormalize(labels,model.score_min,model.score_max)
-
-            scor_bias = torch.clamp(scor_bias,model.score_min,model.score_max)
-            scor_bias = generateData.betaNormalize(scor_bias,model.score_min,model.score_max)
-            a,b = generateData.meanvar_to_alphabeta(scor_bias,amb_incon/model.div_beta_var)
-
-            scoresDis = Beta(1,1)
-            logConst = scoresDis._log_normalizer(a,b)
-
-            #normSum = (torch.log((torch.pow(labels,alpha-1)*torch.pow(1-labels,beta-1)).sum(dim=2))+logConst.sum(dim=2)).sum()
-            normSum = logConst.sum()+torch.logsumexp((a-1)*torch.log(labels)+(b-1)*torch.log(1-labels),dim=2).sum()
-
-            #print(normSum.size())
-            #print()
-
-            tensor = (a-1)*torch.log(labels)+(b-1)*torch.log(1-labels)
-
-            #for i in range(tensor.size(0)):
-            #    for j in range(tensor.size(1)):
-            #        print(tensor[i,j])
-
-            #print(normSum.size())
-
-        else:
-            raise ValueError("Unknown score distribution : {}".format(model.score_dis))
-
-        loss += normSum
 
     return loss
 
@@ -157,7 +108,7 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
 
     loss = neg_log_proba
 
-    loss = addLossTerms(loss,model,args.prior_weight,args.norm_sum,trainMatrix.is_cuda)
+    loss = addLossTerms(loss,model,args.prior_weight)
 
     loss.backward(retain_graph=True)
 
@@ -181,11 +132,13 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
 def computeHessDiag(loss,tensor):
 
     gradient = grad(loss, tensor, create_graph=True)
+
     gradient = gradient[0]
 
     hessDiag = torch.zeros_like(tensor)
     for i,first_deriv in enumerate(gradient):
         hessDiag[i] = grad(first_deriv, tensor, create_graph=True)[0][i]
+
     return hessDiag,gradient
 
 def get_OptimConstructor(optimStr,momentum):
@@ -337,7 +290,7 @@ def main(argv=None):
     #Building the model
     model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg,\
                                     args.score_dis,args.score_min,args.score_max,args.div_beta_var,\
-                                    args.prior_update_frequ)
+                                    args.prior_update_frequ,args.extr_sco_dep)
     if args.cuda:
         model = model.cuda()
 
@@ -363,6 +316,7 @@ def main(argv=None):
 
     #Write the parameters of the model and its confidence interval in a csv file
     loss = model(trainSet)
+
     paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch=0,scoresDis=args.score_dis,score_min=args.score_min,score_max=args.score_max)
 
     if not args.only_init:
