@@ -31,8 +31,43 @@ from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 
 paramKeys = ["bias","incons","diffs","trueScores"]
-
 baselinesTypes = ['mos','sr_mos','zs_sr_mos']
+
+def plotVideoRawScores(dataset,videoList,score_min,score_max):
+    ''' Plot histograms of videos raw scores
+    Args:
+        dataset (str): the name of the dataset
+        videoList (list): the list of videos index to plot the raw scores of
+        score_min (int): the minimum score that can be given
+        score_max (int): the maximum score that can be given
+    '''
+
+    videoList = np.array(videoList).astype(int)
+
+    lines = np.genfromtxt("../data/{}_scores.csv".format(dataset),dtype=str)[videoList]
+    lineNames = lines[:,1]
+    lines = lines[:,2:].astype(int)
+
+    width = 1
+    nb_lines = int(math.sqrt(len(lines)))
+
+    plt.figure()
+
+    plt.subplots_adjust(hspace=0.3)
+
+    for i,line in enumerate(lines):
+
+        subplot = plt.subplot(nb_lines,nb_lines,i+1)
+        bins = np.arange(score_min,score_max+1)-0.5*width
+
+        subplot.hist(line, score_max-score_min+1,color='black',range=(score_min,score_max+1))
+        subplot.set_xticks(np.arange(score_min,score_max+1)+0.5*width)
+        subplot.set_xticklabels(np.arange(score_min,score_max+1).astype(str))
+        subplot.set_title(lineNames[i])
+        subplot.set_xlabel("Number of raw scores")
+        subplot.set_xlabel("Raw scores value")
+
+    plt.savefig("../vis/{}_scores.png".format(dataset))
 
 def agregate(pairList):
     ''' Takes a list of pairs (number of annotators, error) and agregate the pairs having the same number of annotators
@@ -312,6 +347,8 @@ def twoDimRepr(exp_id,model_id,start_epoch,paramPlot,plotRange):
         plt.savefig("../vis/{}/model{}_{}_tsne.png".format(exp_id,model_id,key))
 
         plt.figure()
+        plt.xlabel("First principal component")
+        plt.ylabel("Second principal component")
         plt.title("model "+str(model_id)+" : "+cleanNamesDict[key])
         plt.scatter(repr_pca[:,0],repr_pca[:,1],color=colors, zorder=2)
         if plotRange:
@@ -343,15 +380,17 @@ def plotDist(exp_id,model_id,startEpoch,endEpoch,plotRange):
 
     axDist.set_yscale('log')
 
-        distArray = np.genfromtxt("../results/{}/model{}_dist.csv".format(exp_id,model_id),delimiter=",",dtype=str)
-        header = distArray[0]
-        distArray = distArray[1:].astype(float)
+    distArray = np.genfromtxt("../results/{}/model{}_dist.csv".format(exp_id,model_id),delimiter=",",dtype=str)
+    header = distArray[0]
+    distArray = distArray[1:].astype(float)
 
-        for j,key in enumerate(header):
-            if key != "all":
-                axDist.plot(distArray[startEpoch:endEpoch,j],label="model{} {}".format(model_id,key),color=colors[j],marker=markers[i],alpha=0.5)
+    for j,key in enumerate(header):
+        if key != "all":
+            axDist.plot(distArray[startEpoch:endEpoch,j],label="{}".format(key),color=colors[j],marker=markers[i],alpha=0.5)
 
     box = axDist.get_position()
+    axDist.set_xlabels("Epochs")
+    axDist.set_ylabels("Euclidean distance")
     axDist.set_position([box.x0, box.y0, box.width * 0.8, box.height])
     axDist.set_xticks(np.arange(1,endEpoch-startEpoch,25))
     axDist.set_xticklabels(np.arange(startEpoch,endEpoch,25).astype(str))
@@ -361,7 +400,7 @@ def plotDist(exp_id,model_id,startEpoch,endEpoch,plotRange):
 
     plt.savefig("../vis/{}/dist_{}.png".format(exp_id,model_id))
 
-def plotParam(dataset,exp_id,indList):
+def plotParam(dataset,exp_id,indList,labels):
     ''' Plot the parameters found by models against a the ground truth parameters
 
     It produces a scatter plot where the x-axis represents the ground-truth values and the y-axis represents the value found by models.
@@ -393,6 +432,9 @@ def plotParam(dataset,exp_id,indList):
 
         maxErr = 0
 
+        if not labels:
+            labels = indList
+
         for k,indModel in enumerate(indList):
 
             paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)),key=findNumbers)
@@ -404,10 +446,12 @@ def plotParam(dataset,exp_id,indList):
                 param_gt = np.genfromtxt("../data/{}_{}.csv".format(dataset,key))
 
                 plt.figure(j,figsize=(10,5))
-                plt.plot(param_gt,tensor[k,j],"*",label=indModel,color=colors[k])
+                plt.plot(param_gt,tensor[k,j],"*",label=labels[k],color=colors[k])
                 x = np.arange(xRangeDict[0],xRangeDict[1],0.01)
                 plt.plot(x,x)
 
+                plt.xlabel("Ground truth")
+                plt.ylabel("Estimation")
                 plt.xlim(xRangeDict)
                 plt.ylim(xRangeDict)
 
@@ -459,22 +503,22 @@ def fakeDataDIstr(args):
         plt.legend()
         plt.savefig("../vis/{}_{}_dis.png".format(args.dataset,paramName))
 
-def computeBaselines(trainSet,baselineName):
+def computeBaselines(scoreMat,baselineName):
     ''' Run one baseline method on some dataset and returns the true scores vector produced
 
     Args:
-        trainSet (torch.tensor): the score matrix
+        scoreMat (torch.tensor): the score matrix
         baselineName (str): the name of the baseline to compute
     Returns
         the true score vector found by the baselines and the corresponding confidence interval
     '''
 
     if baselineName == "mos":
-        value,conf = modelBuilder.MOS(trainSet,sub_rej=False,z_score=False)
+        value,conf = modelBuilder.MOS(scoreMat,sub_rej=False,z_score=False)
     elif baselineName == "sr_mos":
-        value,conf = modelBuilder.MOS(trainSet,sub_rej=True,z_score=False)
+        value,conf = modelBuilder.MOS(scoreMat,sub_rej=True,z_score=False)
     elif baselineName == "zs_sr_mos":
-        value,conf = modelBuilder.MOS(trainSet,sub_rej=True,z_score=True)
+        value,conf = modelBuilder.MOS(scoreMat,sub_rej=True,z_score=True)
 
     return value,conf
 
@@ -810,9 +854,12 @@ def main(argv=None):
     argreader.parser.add_argument('--conv_speed',type=str,nargs='*',metavar='ID',help='To plot the error as a function of the number of annotator. The value is a list of parameters varying between \
                                     the reference models.')
 
+    argreader.parser.add_argument('--plot_video_raw_scores',type=str,nargs='*',metavar='ID',help='To plot histograms of scores for some videos of a dataset. The value of this argument is the list of videos \
+                                    line index to plot. The dataset should also be indicated with the dataset argument')
+
     argreader.parser.add_argument('--plot_range_pca',type=float,nargs=4,metavar="RANGE",help='The range to use when ploting the PCA. The values should be indicated in this order : xmin,xmax,ymin,ymax.')
     argreader.parser.add_argument('--plot_range_dist',type=float,nargs=2,metavar="RANGE",help='The range to use when ploting the distance. The values should be indicated in this order : ymin,ymax.')
-
+    argreader.parser.add_argument('--labels',type=str,nargs='*',metavar="RANGE",help='The label names for the model, in the order where they will be appear in the plot.')
 
     #Reading the comand line arg
     argreader.getRemainingArgs()
@@ -832,7 +879,7 @@ def main(argv=None):
     if not (os.path.exists("../models/{}".format(args.exp_id))):
         os.makedirs("../models/{}".format(args.exp_id))
 
-    trainSet,distorNbList = load_data.loadData(args.dataset)
+    scoreMat,distorNbList = load_data.loadData(args.dataset)
 
     if args.comp_gt:
         compareWithGroundTruth(args.exp_id,args.comp_gt,args.error_metric)
@@ -845,7 +892,7 @@ def main(argv=None):
         fakeDataDIstr(args)
 
     if args.plot_param:
-        plotParam(args.dataset,args.exp_id,args.plot_param)
+        plotParam(args.dataset,args.exp_id,args.plot_param,args.labels)
 
     if args.plot_dist:
         plotDist(args.exp_id,args.plot_dist[0],args.plot_dist[1],args.plot_dist[2],args.plot_range_dist)
@@ -878,6 +925,9 @@ def main(argv=None):
         ids,seeds = zip(*sorted(zip(ids,seeds),key=lambda x:x[0]))
 
         convSpeed(args.exp_id,ids,seeds,args.conv_speed)
+
+    if args.plot_video_raw_scores:
+        plotVideoRawScores(args.dataset,args.plot_video_raw_scores,args.score_min,args.score_max)
 
 if __name__ == "__main__":
     main()
