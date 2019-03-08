@@ -98,7 +98,14 @@ def main(argv=None):
             for j in range(args.nb_annot):
 
                 mean = trueScores[i]+bias[j]
-                var = torch.pow(diffs[i//args.nb_video_per_content],2)+torch.pow(incons[j],2)
+
+                if args.extr_sco_dep:
+                    #Add a dependency between the variance and the mean of videos.
+                    #Raw score variance of videos with extreme true scores will be lower (extreme means very high or very low).
+                    var = torch.pow(diffs[i//args.nb_video_per_content],2)*(-(trueScores[i]-args.score_min)*(trueScores[i]-args.score_max))
+                    var += torch.pow(incons[j],2)*(-(mean.item()-args.score_min)*(mean.item()-args.score_max))
+                else:
+                    var = torch.pow(diffs[i//args.nb_video_per_content],2)+torch.pow(incons[j],2)
 
                 if args.score_dis == "Beta":
 
@@ -107,7 +114,6 @@ def main(argv=None):
 
                     alpha,beta = meanvar_to_alphabeta(mean,var/args.div_beta_var)
 
-                    #print(alpha,beta)
                     scoresDis = Beta(alpha,beta)
                     postProcessingFunc = lambda x:betaDenormalize(x,args.score_min,args.score_max)
                 elif args.score_dis == "Normal":
@@ -289,25 +295,35 @@ def meanvar_to_alphabeta(mean,var):
 def identity(x,score_min,score_max):
     return x
 
-def betaNormalize(x,score_min,score_max):
+def betaNormalize(x,score_min,score_max,rawScore=False):
     ''' Normalize scores between 1 and 5 to score between 0 and 1
     Args:
         x (torch.tensor or numpy.array): the value to normalise
         score_min (int): the mininmum unnormalised score
         score_max (int): the maximum unnormalised score
+        rawScore (bool): indicates the values being normalized are raw scores or not.
     Returns:
         the scores normalised
     '''
 
     #The 0.1 value helps for numerical stability, because beta distribution can go up to
     #plus infinity when x goes to 0 or 1
-    #low = score_min-0.1
-    #high = score_max+0.1
 
-    low = score_min
-    high = score_max
+    if rawScore:
 
-    return (x-low)/(high-low)
+        res = (x-score_min)/(score_max-score_min)
+
+        #Re-normalising to [0.1,0.9] because the raw score can be exactly 0 or 1,
+        #and the beta density is equal to 0 at those values
+        halfInterv = 1/(2*(score_max-score_min+1))
+        high = 1-halfInterv
+        low = 0+halfInterv
+
+        return res*(high-low)+low
+
+    else:
+
+        return (x-score_min)/(score_max-score_min)
 
 def betaDenormalize(x,score_min,score_max):
     ''' Un-normalize scores between 0 and 1 to score between 1 and 5
@@ -321,8 +337,6 @@ def betaDenormalize(x,score_min,score_max):
 
     #The 0.1 value helps for numerical stability, because beta distribution can go up to
     #plus infinity when x goes to 0 or 1
-    #low = score_min-0.1
-    #high = score_max+0.1
 
     low = score_min
     high = score_max

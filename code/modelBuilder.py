@@ -23,7 +23,7 @@ import os
 class MLE(nn.Module):
     ''' Implement all the models proposed in our paper including the one proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
 
-    def __init__(self,videoNb,annotNb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ):
+    def __init__(self,videoNb,annotNb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep):
         '''
         Args:
             videoNb (int): the total number of video
@@ -35,6 +35,8 @@ class MLE(nn.Module):
             score_max (int): the maximum score that can be given to a video
             div_beta_var (int): the factor with which to reduce the variance of the beta distribution, to ensure numerical stability.
             priorUpdateFrequ (int): the number of epoch to wait before updating the empirical prior. Ignored if the empirical prior is not used.
+            extr_sco_dep (bool): whether or not to add a dependency between the variance and the mean of videos. If true, raw score variance of videos with very high or very low scores\
+            will be lower.
         '''
 
         super(MLE, self).__init__()
@@ -68,6 +70,8 @@ class MLE(nn.Module):
         self.priorUpdateCount = priorUpdateFrequ
         self.priorUpdateFrequ = priorUpdateFrequ
 
+        self.extr_sco_dep = extr_sco_dep
+
     def forward(self,scoreMat):
         '''Compute the negative log probability of the data according to the model
         Args:
@@ -88,13 +92,10 @@ class MLE(nn.Module):
         scoresDis = self.compScoreDis(x.is_cuda)
 
         if self.score_dis == "Beta":
-            x = generateData.betaNormalize(x,self.score_min,self.score_max)
-
-        #print(scoresDis.log_prob(x.unsqueeze(2)))
-        #sys.exit(0)
+            x = generateData.betaNormalize(x,self.score_min,self.score_max,rawScore=True)
 
         log_prob = scoresDis.log_prob(x.unsqueeze(2)).sum()
-        #print(x.unsqueeze(2))
+
         return -log_prob
 
     def compScoreDis(self,x_is_cuda):
@@ -107,8 +108,9 @@ class MLE(nn.Module):
 
         if self.score_dis == "Beta":
 
-            scor_bias = torch.clamp(scor_bias,self.score_min,self.score_max)
+            scor_bias = torch.clamp(scor_bias,self.score_min+0.001,self.score_max-0.001)
             scor_bias = generateData.betaNormalize(scor_bias,self.score_min,self.score_max)
+
             alpha,beta = generateData.meanvar_to_alphabeta(scor_bias,amb_incon/self.div_beta_var)
 
             scoresDis = Beta(alpha.unsqueeze(2),beta.unsqueeze(2))
@@ -148,9 +150,19 @@ class MLE(nn.Module):
         amb_pol = (amb*vid_means_pow).sum(dim=1)
 
         amb_sq = torch.pow(amb_pol,2)
-        amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
         incon_sq = torch.pow(torch.sigmoid(self.incons),2)
-        incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
+
+        if self.extr_sco_dep:
+            amb_sq = amb_sq*(-(self.trueScores-self.score_min)*(self.trueScores-self.score_max))
+            amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
+
+            meanMat = self.trueScoresBiasMatrix()
+            incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
+            incon_sq = incon_sq*(-(meanMat-self.score_min)*(meanMat-self.score_max))
+
+        else:
+            amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
+            incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
 
         return amb_sq+incon_sq
 
@@ -164,6 +176,7 @@ class MLE(nn.Module):
         #Matrix containing the sum of all (video_scor,annot_bias) possible pairs
         scor = self.trueScores.unsqueeze(1).expand(self.videoNb,self.annotNb)
         bias = self.bias.unsqueeze(0).expand(self.videoNb, self.annotNb)
+
         return scor+bias
 
     def init(self,scoreMat,datasetName,score_dis,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init):
@@ -255,7 +268,7 @@ class MLE(nn.Module):
 
     def iInitBase(self,scoreMat):
         '''Compute the standard deviation of scores given by every annotators.
-        Can be used to initialise the inconsistency vector, like tsInitBase
+        Can be used to initialise the inconsistencies vector, like tsInitBase
         Args:
             scoreMat (torch.tensor): the score matrix
         '''
@@ -495,7 +508,7 @@ def MOS(scoreMat,z_score,sub_rej):
 
     return mos_mean.numpy(),mos_conf.numpy()
 
-def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ):
+def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep):
     '''Build a model
     Args:
         annot_nb (int): the number of annotators
@@ -510,11 +523,14 @@ def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_
         div_beta_var (int): the factor with which to reduce the variance of the beta distribution, to ensure numerical stability.
         priorUpdateFrequ (int): the number of epoch to wait before updating the empirical prior. Ignored if the empirical prior is not used.
 
+        extr_sco_dep (bool): whether or not to add a dependency between the variance and the mean of videos. If true, raw score variance of videos with very high or very low scores\
+        will be lower.
+
     Returns:
         the built model
     '''
 
-    model = MLE(nbVideos,annot_nb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ)
+    model = MLE(nbVideos,annot_nb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep)
     return model
 
 if __name__ == '__main__':

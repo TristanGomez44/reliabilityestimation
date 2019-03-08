@@ -168,6 +168,10 @@ class ArgReader():
         self.parser.add_argument('--prior_update_frequ', type=int, metavar='S',
                             help='The number of epoch to wait before updating the empirical prior. Ignored if other prior is used.')
 
+        self.parser.add_argument('--extr_sco_dep', type=str2bool, metavar='S',
+                            help='Whether or not to add a dependency between the variance and the mean of videos. If true, raw score variance of videos with very high or very low scores\
+                            will be lower.')
+
         self.args = None
 
     def getRemainingArgs(self):
