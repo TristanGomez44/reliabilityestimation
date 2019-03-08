@@ -16,7 +16,7 @@ import torch.nn.functional as F
 from torch.distributions import Bernoulli
 from torch.autograd import grad
 import random
-import train_val
+import train
 import math
 import glob
 import matplotlib.cm as cm
@@ -531,7 +531,7 @@ def computeConfInter(loss,vector):
         a vector of confidence intervals
     '''
 
-    hessDiag,grad = train_val.computeHessDiag(loss,vector)
+    hessDiag,grad = train.computeHessDiag(loss,vector)
 
     confInter = 1.96/torch.sqrt(hessDiag)
 
