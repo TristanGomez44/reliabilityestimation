@@ -108,7 +108,7 @@ def addLossTerms(loss,model,weight,cuda):
 
     return loss
 
-def one_epoch_train(model,optimizer,trainMatrix, epoch, args):
+def one_epoch_train(model,optimizer,scoreMat, epoch, args):
     '''Train a model
 
     After having run the model on every input of the train set,
@@ -117,7 +117,7 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args):
     Args:
         model (MLE): a MLE module (as defined in modelBuilder)
         optimizer (torch.optim): the optimizer to train the model
-        trainMatrix (torch.tensor): the matrix train
+        scoreMat (torch.tensor): the matrix train
         epoch (int): the current epoch number
         args (Namespace): the namespace containing all the arguments required for training and building the model
     '''
@@ -125,13 +125,13 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args):
 
     model.train()
 
-    data = Variable(trainMatrix)
+    scoreMat = Variable(scoreMat)
 
-    neg_log_proba = model(data)
+    neg_log_proba = model(scoreMat)
 
     loss = neg_log_proba
 
-    loss = addLossTerms(loss,model,args.prior_weight,trainMatrix.is_cuda)
+    loss = addLossTerms(loss,model,args.prior_weight,scoreMat.is_cuda)
 
     loss.backward(retain_graph=True)
 
@@ -195,7 +195,7 @@ def get_OptimConstructor(optimStr,momentum):
 
     return optimConst,kwargs
 
-def train(model,optimConst,kwargs,trainSet, args,startEpoch):
+def train(model,optimConst,kwargs,scoreMat, args,startEpoch):
     '''Train a model during several epochs. The training stops when the distance travelled by parameters gets
     very low or when the maximum number of epochs has been reached.
 
@@ -203,7 +203,7 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
         model (MLE): an MLE model as defined in modelBuilder.py
         optimConst (torch.optim): the constructor of an optimiser, e.g. "torch.optim.sgd.SGD".
         kwargs (dict): a dictionnary containing argument for the optimiser constructor
-        trainSet (torch.tensor): the score matrix to train on
+        scoreMat (torch.tensor): the score matrix to train on
         args (Namespace): the namespace containing all the arguments required for training and building the model
         startEpoch (int): the epoch number at which the training start
     Returns:
@@ -252,7 +252,7 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
         for key in oldParam.keys():
             oldParam[key] = getattr(model,key).clone()
 
-        loss = one_epoch_train(model,optimizer,trainSet,epoch, args)
+        loss = one_epoch_train(model,optimizer,scoreMat,epoch, args)
         lossArray[epoch-1] = loss
 
         #Computing distance for all parameters
@@ -320,16 +320,16 @@ def main(argv=None):
         os.makedirs("../models/{}".format(args.exp_id))
 
     #Loading data
-    trainSet,distorNbList = load_data.loadData(args.dataset)
+    scoreMat,distorNbList = load_data.loadData(args.dataset)
 
     #Write the arguments in a config file so the experiment can be re-run
     argreader.writeConfigFile("../models/{}/model{}.ini".format(args.exp_id,args.ind_id))
 
     if args.cuda:
-        trainSet = trainSet.cuda()
+        scoreMat = scoreMat.cuda()
 
     #Building the model
-    model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg,\
+    model = modelBuilder.modelMaker(scoreMat.size(1),len(scoreMat),distorNbList,args.poly_deg,\
                                     args.score_dis,args.score_min,args.score_max,args.div_beta_var,\
                                     args.prior_update_frequ)
     if args.cuda:
@@ -337,7 +337,7 @@ def main(argv=None):
 
     #Inititialise the model
     if args.start_mode == "init":
-        model.init(trainSet,args.dataset,args.score_dis,args.param_not_gt,\
+        model.init(scoreMat,args.dataset,args.score_dis,args.param_not_gt,\
                     args.true_scores_init,args.bias_init,args.diffs_init,args.incons_init)
         startEpoch=1
     elif args.start_mode == "fine_tune":
@@ -356,7 +356,7 @@ def main(argv=None):
     torch.save(model.state_dict(), "../models/{}/model{}_epoch0".format(args.exp_id,args.ind_id))
 
     #Write the parameters of the model and its confidence interval in a csv file
-    loss = model(trainSet)
+    loss = model(scoreMat)
     paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch=0,scoresDis=args.score_dis,score_min=args.score_min,score_max=args.score_max)
 
     if not args.only_init:
@@ -371,7 +371,7 @@ def main(argv=None):
 
         model.setPrior(args.prior,args.dataset)
 
-        loss,epoch = train(model,optimConst,kwargs,trainSet, args,startEpoch=startEpoch)
+        loss,epoch = train(model,optimConst,kwargs,scoreMat, args,startEpoch=startEpoch)
         torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
         paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max)
 

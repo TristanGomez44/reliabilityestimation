@@ -68,10 +68,10 @@ class MLE(nn.Module):
         self.priorUpdateCount = priorUpdateFrequ
         self.priorUpdateFrequ = priorUpdateFrequ
 
-    def forward(self,xInt):
+    def forward(self,scoreMat):
         '''Compute the negative log probability of the data according to the model
         Args:
-            xInt (torch.tensor): the score matrix to train on
+            scoreMat (torch.tensor): the score matrix to train on
         '''
 
         if self.priorName == "empirical":
@@ -84,7 +84,7 @@ class MLE(nn.Module):
             else:
                 self.priorUpdateCount += 1
 
-        x = xInt.float()
+        x = scoreMat.float()
         scoresDis = self.compScoreDis(x.is_cuda)
 
         if self.score_dis == "Beta":
@@ -166,10 +166,10 @@ class MLE(nn.Module):
         bias = self.bias.unsqueeze(0).expand(self.videoNb, self.annotNb)
         return scor+bias
 
-    def init(self,dataInt,datasetName,score_dis,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init):
+    def init(self,scoreMat,datasetName,score_dis,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init):
         ''' Initialise the parameters of the model using ground-truth or approximations only based on data
         Args:
-            dataInt (torch.tensor): the score matrix to train on
+            scoreMat (torch.tensor): the score matrix to train on
             datasetName (str): the dataset name (useful only if the dataset is artificial and if some parameters have to initialised with ground truth)
             score_dis (str): the score distribution to use. Can be \'Beta\' or \'Normal\'.
             paramNotGT (list): the name of parameters not initialised with ground truth but with approximations only based on data. The parameters will be
@@ -211,36 +211,36 @@ class MLE(nn.Module):
 
             initFunc = getattr(self,functionNameDict[key])
 
-            tensor = initFunc(dataInt)
+            tensor = initFunc(scoreMat)
             if (key == "incons" or key == "diffs") and score_dis=="Beta":
                 tensor = torch.log(tensor/(1-tensor))
 
             setattr(self,key,nn.Parameter(tensor))
 
-    def tsInitBase(self,dataInt):
+    def tsInitBase(self,scoreMat):
         ''' Compute the mean opinion score for each video. Can be used to initialise the true score vector using only data
         Args:
-            dataInt (torch.tensor): the score matrix
+            scoreMat (torch.tensor): the score matrix
         '''
-        return dataInt.float().mean(dim=1)
+        return scoreMat.float().mean(dim=1)
 
-    def bInitBase(self,dataInt):
+    def bInitBase(self,scoreMat):
         ''' Compute the mean of the difference between true scores and raw scores for every annotator.
         Can be used to initialise the bias vector, like tsInitBase
         Args:
-            dataInt (torch.tensor): the score matrix
+            scoreMat (torch.tensor): the score matrix
         '''
 
-        return (dataInt.float()-self.trueScores.unsqueeze(1).expand_as(dataInt)).mean(dim=0)
+        return (scoreMat.float()-self.trueScores.unsqueeze(1).expand_as(scoreMat)).mean(dim=0)
 
-    def dInitBase(self,dataInt):
+    def dInitBase(self,scoreMat):
         '''Compute the standard deviation of scores given to every content.
         Can be used to initialise the difficulties vector, like tsInitBase
         Args:
-            dataInt (torch.tensor): the score matrix
+            scoreMat (torch.tensor): the score matrix
         '''
 
-        video_amb = torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2).mean(dim=1)
+        video_amb = torch.pow(self.trueScoresBiasMatrix()-scoreMat.float(),2).mean(dim=1)
 
         content_amb = torch.zeros(len(self.distorNbList)*(self.polyDeg+1))
         sumInd = 0
@@ -253,14 +253,14 @@ class MLE(nn.Module):
         #Clamping because std of data can be bigger than 1 and for numerical stability
         return torch.clamp(content_amb,0.01,0.99)
 
-    def iInitBase(self,dataInt):
+    def iInitBase(self,scoreMat):
         '''Compute the standard deviation of scores given by every annotators.
         Can be used to initialise the inconsistency vector, like tsInitBase
         Args:
-            dataInt (torch.tensor): the score matrix
+            scoreMat (torch.tensor): the score matrix
         '''
 
-        res = torch.sqrt((torch.pow(self.trueScoresBiasMatrix()-dataInt.float(),2)).mean(dim=0))
+        res = torch.sqrt((torch.pow(self.trueScoresBiasMatrix()-scoreMat.float(),2)).mean(dim=0))
         #Clamping because std of data can be bigger than 1 and for numerical stability
         res = torch.clamp(res,0.01,0.99)
 
@@ -459,7 +459,7 @@ def removeColumns(data,removeList):
             colCount += 1
     return data_rm
 
-def MOS(dataInt,z_score,sub_rej):
+def MOS(scoreMat,z_score,sub_rej):
     ''' Computes the mean opinion score (MOS) and the standard deviation of opinion scores (SOS) for every video
 
     Args:
@@ -471,7 +471,7 @@ def MOS(dataInt,z_score,sub_rej):
 
     '''
 
-    data = dataInt.float()
+    data = scoreMat.float()
 
     if sub_rej:
         rejList = subRej(data)
