@@ -121,7 +121,7 @@ class ArgReader():
                             help='the optimizer to use (default: \'GD\')')
 
         self.parser.add_argument('--start_mode', type=str,metavar='SM',
-                    help='The mode to use to initialise the model. Can be \'init\' or \'fine_tune\'.')
+                    help='The mode to use to initialise the model. Can be \'base_init\', \'iter_init\' or \'fine_tune\'.')
 
         self.parser.add_argument('--true_scores_init', type=str,metavar='SM',
                     help='The function name to use to init the true scores when using aproximate init. Can only be \'base\'')
@@ -171,6 +171,9 @@ class ArgReader():
         self.parser.add_argument('--extr_sco_dep', type=str2bool, metavar='S',
                             help='Whether or not to add a dependency between the variance and the mean of videos. If true, raw score variance of videos with very high or very low scores\
                             will be lower.')
+
+        self.parser.add_argument('--ref_vid_to_score_max', type=str2bool, metavar='S',
+                            help='Whether or not to set the score of reference video to the maximum score (because the quality cannot be better).')
 
         self.args = None
 
