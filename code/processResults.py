@@ -53,7 +53,7 @@ def plotVideoRawScores(dataset,videoList,score_min,score_max):
 
     plt.figure()
 
-    plt.subplots_adjust(hspace=0.3)
+    plt.subplots_adjust(hspace=0.6,wspace = 0.4)
 
     for i,line in enumerate(lines):
 
@@ -63,9 +63,9 @@ def plotVideoRawScores(dataset,videoList,score_min,score_max):
         subplot.hist(line, score_max-score_min+1,color='black',range=(score_min,score_max+1))
         subplot.set_xticks(np.arange(score_min,score_max+1)+0.5*width)
         subplot.set_xticklabels(np.arange(score_min,score_max+1).astype(str))
-        subplot.set_title(lineNames[i])
-        subplot.set_xlabel("Number of raw scores")
-        subplot.set_xlabel("Raw scores value")
+        subplot.set_title(lineNames[i].replace(".yuv",""))
+        subplot.set_ylabel("Empirical count")
+        subplot.set_xlabel("Raw scores")
 
     plt.savefig("../vis/{}_scores.png".format(dataset))
 
@@ -369,11 +369,7 @@ def plotDist(exp_id,model_id,startEpoch,endEpoch,plotRange):
 
     colors = cm.rainbow(np.linspace(0, 1, len(paramKeys)+1))
 
-    markers = [m for m, func in Line2D.markers.items() if func != 'nothing' and m not in Line2D.filled_markers]
-    if len(markers) < len(ind_list):
-        raise ValueError("Too many model to plot : {}. {} is the maximum".format(nbPlot,len(markers)))
-    else:
-        markers = markers[:len(ind_list)]
+    cleanNameDict = {"trueScores":"True scores","bias":"Biases","incons":"Inconsistencies","diffs":"Difficulties"}
 
     fig = plt.figure(figsize=(10,5))
     axDist = fig.add_subplot(111)
@@ -386,17 +382,17 @@ def plotDist(exp_id,model_id,startEpoch,endEpoch,plotRange):
 
     for j,key in enumerate(header):
         if key != "all":
-            axDist.plot(distArray[startEpoch:endEpoch,j],label="{}".format(key),color=colors[j],marker=markers[i],alpha=0.5)
+            axDist.plot(distArray[startEpoch:endEpoch,j],label="{}".format(cleanNameDict[key]),color=colors[j],alpha=0.5)
 
     box = axDist.get_position()
-    axDist.set_xlabels("Epochs")
-    axDist.set_ylabels("Euclidean distance")
+    axDist.set_xlabel("Epochs")
+    axDist.set_ylabel("Euclidean distance")
     axDist.set_position([box.x0, box.y0, box.width * 0.8, box.height])
     axDist.set_xticks(np.arange(1,endEpoch-startEpoch,25))
     axDist.set_xticklabels(np.arange(startEpoch,endEpoch,25).astype(str))
     axDist.set_ylim(plotRange)
 
-    fig.legend(loc='right',prop={'size': 10})
+    fig.legend(loc='right',prop={'size': 15})
 
     plt.savefig("../vis/{}/dist_{}.png".format(exp_id,model_id))
 
@@ -470,7 +466,6 @@ def fakeDataDIstr(args):
         args (namespace): the namespace collected in the begining of the script containing all arguments about model training and evaluation.
     '''
 
-
     dataConf = configparser.ConfigParser()
     dataConf.read("../data/{}.ini".format(args.dataset))
     dataConf = dataConf['default']
@@ -478,8 +473,8 @@ def fakeDataDIstr(args):
     paramKeys = ["trueScores","diffs","incons","bias"]
 
     cleanNames = ["True Scores","Difficulties","Inconsistencies","Biases"]
-    dx = 0.01
-
+    dx = 0.05
+    xLim = 0.4
 
     dist_dic = {"trueScores":lambda x:torch.exp(Uniform(1,5).log_prob(x)),\
                 "diffs":lambda x:torch.exp(Beta(float(dataConf['diff_alpha']), float(dataConf["diff_beta"])).log_prob(x)), \
@@ -496,11 +491,29 @@ def fakeDataDIstr(args):
         paramValues = np.genfromtxt("../data/{}_{}.csv".format(dataConf["dataset_id"],paramName))
         trueCDF = dist_dic[paramName](range_dic[paramName]).numpy().reshape(-1)
 
-        plt.figure(i)
+        fig,empiCountAx = plt.subplots()
+
         plt.title(cleanNames[i])
-        plt.plot(range_dic[paramName].numpy(),trueCDF,label="True distribution")
-        plt.hist(paramValues,10,label="Empirical distribution")
-        plt.legend()
+        plt.ylabel("Density")
+
+        plt.xlabel("Value")
+
+        handles = []
+        distAx = empiCountAx.twinx()
+
+        if paramName == "incons" or paramName == "diffs":
+            empiCountAx.hist(paramValues,10,label="Empirical distribution",color="orange",range=[0,xLim])
+            #plt.xlim(0,xLim)
+        else:
+            empiCountAx.hist(paramValues,10,label="Empirical distribution",color="orange")
+
+        handles += distAx.plot(range_dic[paramName].numpy(),trueCDF,label="True distribution",color="blue")
+        print(trueCDF.max())
+        #distAx.set_ylim(0,trueCDF.max())
+
+        leg = plt.legend(handles=handles,title="Test")
+
+        plt.gca().add_artist(leg)
         plt.savefig("../vis/{}_{}_dis.png".format(args.dataset,paramName))
 
 def computeBaselines(scoreMat,baselineName):
