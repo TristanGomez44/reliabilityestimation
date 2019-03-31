@@ -7,6 +7,8 @@ from torch.distributions.normal import Normal
 from torch.distributions.multinomial import Multinomial
 import argparse
 
+import matplotlib.gridspec as gridspec
+
 import torch
 import glob
 import numpy as np
@@ -25,10 +27,10 @@ def main(argv=None):
     argreader = ArgReader(argv)
 
     argreader.parser.add_argument('--bias_std', metavar='STD',type=float,default=0.25,help='The standard deviation of the bias gaussian distribution')
-    argreader.parser.add_argument('--incons_alpha', metavar='STD',type=float,default=2,help='The alpha parameter of the inconsistency beta distribution')
-    argreader.parser.add_argument('--incons_beta', metavar='STD',type=float,default=2,help='The beta parameter of the inconsistency beta distribution')
-    argreader.parser.add_argument('--diff_alpha', metavar='STD',type=float,default=2,help='The alpha parameter of the difficulty beta distribution')
-    argreader.parser.add_argument('--diff_beta', metavar='STD',type=float,default=2,help='The beta parameter of the difficulty beta distribution')
+    argreader.parser.add_argument('--incons_alpha', metavar='STD',type=float,default=1,help='The alpha parameter of the inconsistency beta distribution')
+    argreader.parser.add_argument('--incons_beta', metavar='STD',type=float,default=10,help='The beta parameter of the inconsistency beta distribution')
+    argreader.parser.add_argument('--diff_alpha', metavar='STD',type=float,default=1,help='The alpha parameter of the difficulty beta distribution')
+    argreader.parser.add_argument('--diff_beta', metavar='STD',type=float,default=10,help='The beta parameter of the difficulty beta distribution')
 
     argreader.parser.add_argument('--nb_annot', metavar='STD',type=int,default=30,help='The number of annotators')
     argreader.parser.add_argument('--nb_video_per_content', metavar='STD',type=int,default=8,help='The number of videos per content')
@@ -42,6 +44,8 @@ def main(argv=None):
     argreader.parser.add_argument('--init_from',metavar='DATASETNAME',type=str,help='A new dataset can be created by removing lines or columns from of previously created one. \
                                   This argument allow this and its value should be the name of the older dataset.')
 
+
+    argreader.parser.add_argument('--sort_param',action='store_true',help='To sort the parameters when generating them. Helps for a better visualisation')
     #Reading the comand line arg
     argreader.getRemainingArgs()
 
@@ -68,16 +72,19 @@ def main(argv=None):
         nb_videos = args.nb_video_per_content*args.nb_content
 
         trueScores = trueScoreDis.sample((nb_videos,)).double()
+        if args.ref_vid_to_score_max == True:
+            trueScores[torch.arange(len(trueScores))%args.nb_video_per_content == 0] = args.score_max
+
         diffs = diffDis.sample((args.nb_content,)).double()
         incons = inconsDis.sample((args.nb_annot,)).double()
         bias = biasDis.sample((args.nb_annot,)).double()
 
-        #print(bias)
-        scoreMat = torch.zeros((nb_videos,args.nb_annot))
+        if args.sort_param:
+            #Sort the true score and the bias for better visualisation
+            trueScores = trueScores.sort()[0]
+            bias = bias.sort(dim=0)[0]
 
-        dx = 0.01
-        x_coord = torch.arange(0,1,dx)
-        #x_coord = x_coord.unsqueeze(1).unsqueeze(1).expand(len(x_coord),4,4)
+        scoreMat = torch.zeros((nb_videos,args.nb_annot))
 
         meanList = []
 
@@ -91,27 +98,71 @@ def main(argv=None):
         else:
             markers = markers[:args.nb_annot]
 
-        plt.figure(figsize=(10,5))
+        gridspec.GridSpec(3+nb_videos,1)
+        fontSize = 20
+
+        scores = np.arange(args.score_min,args.score_max+1)
+        fig = plt.figure(figsize=(10,11))
+        plt.subplots_adjust(hspace=1.5,wspace = 0)
+        #ax = fig.add_subplot((1+nb_videos)*100+1*10+1,figsize=(10,5))
+        densityAxis = plt.subplot2grid((3+nb_videos,1), (0,0), colspan=1, rowspan=3)
+        box = densityAxis.get_position()
+        densityAxis.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+        densityAxis.set_xlabel("Normalized continuous raw score",fontsize=fontSize)
+        densityAxis.set_ylabel("Density",fontsize=fontSize)
+
+        #Plot the legend
+        handlesVid = []
+        for i in range(nb_videos):
+            handlesVid += densityAxis.plot((0,0),marker='',color=colors[i],label=i)
+        legVid = plt.legend(handles=handlesVid, loc='right' ,title="Videos",fontsize=fontSize,bbox_to_anchor=(1.35, 0.5))
+        plt.setp(legVid.get_title(),fontsize=fontSize)
+        plt.gca().add_artist(legVid)
+        handlesAnnot = []
+        for j in range(args.nb_annot):
+            handlesAnnot += densityAxis.plot((0,0),marker=markers[j],color="black",label=j)
+        legAnnot = plt.legend(handles=handlesAnnot, loc='right' ,title="Annotators",fontsize=fontSize,bbox_to_anchor=(1.4, -0.7),markerscale=4)
+        plt.setp(legAnnot.get_title(),fontsize=fontSize)
+        plt.gca().add_artist(legAnnot)
+
+        dx = 0.01
+        x_coord = torch.arange(0,1,dx)
         plt.xlim(0,1)
 
         for i in range(nb_videos):
             for j in range(args.nb_annot):
 
                 mean = trueScores[i]+bias[j]
+                mean = torch.clamp(mean,args.score_min+0.001,args.score_max-0.001)
 
                 if args.extr_sco_dep:
                     #Add a dependency between the variance and the mean of videos.
                     #Raw score variance of videos with extreme true scores will be lower (extreme means very high or very low).
                     var = torch.pow(diffs[i//args.nb_video_per_content],2)*(-(trueScores[i]-args.score_min)*(trueScores[i]-args.score_max))
                     var += torch.pow(incons[j],2)*(-(mean.item()-args.score_min)*(mean.item()-args.score_max))
+
                 else:
                     var = torch.pow(diffs[i//args.nb_video_per_content],2)+torch.pow(incons[j],2)
 
+                mean = betaNormalize(mean,args.score_min,args.score_max)
+                var = betaNormalize(var,args.score_min,args.score_max,variance=True)
+                #The variance of the beta distribution can not be too big
+                var = torch.clamp(var,0.00001,mean.item()*(1-mean.item())-0.0001)
+
+                postProcessingFunc = lambda x:betaDenormalize(x,args.score_min,args.score_max)
+
                 if args.score_dis == "Beta":
+                    alpha,beta = meanvar_to_alphabeta(mean,var/args.div_beta_var)
+                    scoresDis = Beta(alpha,beta)
+                elif args.score_dis == "Normal":
+                    scoresDis = Normal(mean,var)
+                else:
+                    raise ValueError("Unkown distribution : {}".format(scoreDis))
 
-                    mean = torch.clamp(mean,args.score_min,args.score_max)
+                '''
+                if args.score_dis == "Beta":
                     mean = betaNormalize(mean,args.score_min,args.score_max)
-
+                    var = betaNormalize(var,args.score_min,args.score_max,variance=True)
                     alpha,beta = meanvar_to_alphabeta(mean,var/args.div_beta_var)
 
                     scoresDis = Beta(alpha,beta)
@@ -121,6 +172,7 @@ def main(argv=None):
                     postProcessingFunc = lambda x:identity(x,args.score_min,args.score_max)
                 else:
                     raise ValueError("Unkown distribution : {}".format(scoreDis))
+                '''
 
                 if args.sample_mode == "multinomial":
                     probs = torch.zeros((args.score_max+1-args.score_min))
@@ -150,45 +202,53 @@ def main(argv=None):
                     if args.score_dis == "Beta":
 
                         smpl = scoresDis.sample()
+                        smpl = torch.tensor([np.random.beta(alpha.item(), beta.item(), size=1)])
 
                         #The sample method for the beta distribution has numerical instabilities and is bugged
-                        #which is why the sample os repeated until a good value is found
-                        while torch.isnan(smpl) or smpl == 1:
+                        #which is why the sample is repeated until a good value is found
+                        while torch.isnan(smpl):
                             smpl = scoresDis.sample()
 
-                        scoreMat[i,j] = torch.ceil(ampl*smpl)
+                        scoreMat[i,j] = torch.clamp(torch.ceil(ampl*smpl),args.score_min,args.score_max)
                         postProcessingFunc = lambda x: x
 
                     elif args.score_dis == "Normal":
-                        scoreMat[i,j] = torch.round(scoresDis.sample())
 
+                        scoreMat[i,j] = torch.clamp(torch.ceil(ampl*scoresDis.sample()),args.score_min,args.score_max)
+                    postProcessingFunc = lambda x: x
                 else:
                     print("Unknown sample mode : ",args.sample_mode)
                     sys.exit(0)
 
                 cdf = lambda x: torch.exp(scoresDis.log_prob(x.double()))
-
-                plt.plot(x_coord.numpy(),cdf(x_coord)[0].cpu().detach().numpy(),color=colors[i],marker=markers[j])
+                densityAxis.plot(x_coord.numpy(),cdf(x_coord)[0].cpu().detach().numpy(),color=colors[i],marker=markers[j])
+                #densityAxis.set_xticks(betaNormalize(scores,args.score_min,args.score_max))
+                #densityAxis.set_xticklabels(scores)
+                densityAxis.set_ylim(0,20)
 
                 meanList.append(mean)
 
                 scoreMat[i,j] = postProcessingFunc(scoreMat[i,j])
 
             #Plot score histograms
+            #axHist = fig.add_subplot((1+nb_videos)*100+1*10+2+i)
             scoreNorm = (scoreMat[i] - args.score_min)/(args.score_max+1-args.score_min)
-            plt.hist(scoreNorm,color=colors[i],width=1/(args.score_max-args.score_min+1),alpha=0.5,range=(0,1))
+            histAx = plt.subplot2grid((3+nb_videos,1), (3+i,0), colspan=1, rowspan=1)
 
-        #Plot the legend
-        handlesVid = []
-        for i in range(nb_videos):
-            handlesVid += plt.plot((0,0),marker='',color=colors[i],label=i)
-        legVid = plt.legend(handles=handlesVid, loc='upper right' ,title="Videos")
-        plt.gca().add_artist(legVid)
-        handlesAnnot = []
-        for j in range(args.nb_annot):
-            handlesAnnot += plt.plot((0,0),marker=markers[j],color="black",label=j)
-        legAnnot = plt.legend(handles=handlesAnnot, loc='lower right' ,title="Annotators")
-        plt.gca().add_artist(legAnnot)
+            if i  == nb_videos-1:
+                histAx.set_xlabel("Raw scores",fontsize=fontSize)
+            if i == int(nb_videos//2):
+                histAx.set_ylabel("Empirical count",fontsize=fontSize)
+            #histAx.set_title("Video "+str(i))
+            box = histAx.get_position()
+            histAx.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+
+            plt.hist(scoreNorm,color=colors[i],width=1/(args.score_max-args.score_min+1),range=(0,1))
+            plt.xlim(0,1)
+            plt.ylim(0,args.nb_annot+1)
+
+            plt.xticks(betaNormalize(scores,args.score_min,args.score_max,rawScore=True),scores)
+
 
         plt.savefig("../vis/{}_scoreDis.png".format(args.dataset_id))
 
@@ -295,13 +355,14 @@ def meanvar_to_alphabeta(mean,var):
 def identity(x,score_min,score_max):
     return x
 
-def betaNormalize(x,score_min,score_max,rawScore=False):
+def betaNormalize(x,score_min,score_max,rawScore=False,variance=False):
     ''' Normalize scores between 1 and 5 to score between 0 and 1
     Args:
         x (torch.tensor or numpy.array): the value to normalise
         score_min (int): the mininmum unnormalised score
         score_max (int): the maximum unnormalised score
         rawScore (bool): indicates the values being normalized are raw scores or not.
+        variance (bool): indicates if the values being normalized are variance, in which case they just need to be reduced and not centered
     Returns:
         the scores normalised
     '''
@@ -323,7 +384,10 @@ def betaNormalize(x,score_min,score_max,rawScore=False):
 
     else:
 
-        return (x-score_min)/(score_max-score_min)
+        if variance:
+            return x/(score_max-score_min)
+        else:
+            return (x-score_min)/(score_max-score_min)
 
 def betaDenormalize(x,score_min,score_max):
     ''' Un-normalize scores between 0 and 1 to score between 1 and 5
