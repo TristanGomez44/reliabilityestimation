@@ -45,18 +45,21 @@ class GradNoise():
             The gradient with added noise
         '''
 
-        self.noise = torch.tensor(np.random.normal(size=grad.detach().cpu().numpy().shape))/2
-        gradMean = torch.abs(grad).mean()
-        noise =self.ampl*gradMean*self.noise
-
-        #print(gradMean,torch.abs(torch.tensor(noise)).mean(),torch.abs(torch.tensor(noise)).mean()/gradMean)
-
-        if grad.is_cuda:
-            return grad + noise.cuda().type("torch.cuda.FloatTensor")
+        if self.ampl == 0:
+            return grad
         else:
-            return grad + noise.float()
+            self.noise = torch.tensor(np.random.normal(size=grad.detach().cpu().numpy().shape))/2
+            gradMean = torch.abs(grad).mean()
+            noise =self.ampl*gradMean*self.noise
 
-def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
+            #print(gradMean,torch.abs(torch.tensor(noise)).mean(),torch.abs(torch.tensor(noise)).mean()/gradMean)
+
+            if grad.is_cuda:
+                return grad + noise.double().cuda().type("torch.cuda.FloatTensor")
+            else:
+                return grad + noise.double()
+
+def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max,nb_video_per_content):
 
 
     keys = list(model.state_dict().keys())
@@ -71,6 +74,16 @@ def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max):
                 tensor = torch.sigmoid(tensor)
 
         if keys[i] ==  "trueScores":
+
+            if not nb_video_per_content is None:
+                trueScores = torch.zeros(len(tensor)).double()
+                vidInds = torch.arange(len(tensor))
+
+                trueScores[vidInds%nb_video_per_content == 0] = score_max
+                trueScores[vidInds%nb_video_per_content != 0] = tensor[vidInds%nb_video_per_content != 0]
+
+                tensor = trueScores
+
             tensor = torch.clamp(tensor,score_min,score_max)
 
         tensor = tensor.cpu().detach().numpy().reshape(-1)[:,np.newaxis]
@@ -167,7 +180,7 @@ def get_OptimConstructor(optimStr,momentum):
 
     return optimConst,kwargs
 
-def train(model,optimConst,kwargs,trainSet, args,startEpoch):
+def train(model,optimConst,kwargs,trainSet, args,startEpoch,nb_video_per_content):
 
     epoch = startEpoch
     dist = args.stop_crit+1
@@ -226,7 +239,7 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch):
         epoch += 1
 
         if epoch%args.log_interval==0:
-            paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max)
+            paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max,nb_video_per_content)
             torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
 
     #Writing the array in a csv file
@@ -281,6 +294,11 @@ def main(argv=None):
     #Loading data
     trainSet,distorNbList = load_data.loadData(args.dataset)
 
+    if args.ref_vid_to_score_max:
+        nb_video_per_content = int(processResults.readConfFile("../data/"+args.dataset+".ini",["nb_video_per_content"])[0])
+    else:
+        nb_video_per_content = None
+
     #Write the arguments in a config file so the experiment can be re-run
     argreader.writeConfigFile("../models/{}/model{}.ini".format(args.exp_id,args.ind_id))
 
@@ -290,14 +308,19 @@ def main(argv=None):
     #Building the model
     model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args.poly_deg,\
                                     args.score_dis,args.score_min,args.score_max,args.div_beta_var,\
-                                    args.prior_update_frequ,args.extr_sco_dep)
+                                    args.prior_update_frequ,args.extr_sco_dep,nb_video_per_content)
+
     if args.cuda:
         model = model.cuda()
 
     #Inititialise the model
-    if args.start_mode == "init":
+    if args.start_mode == "base_init":
         model.init(trainSet,args.dataset,args.score_dis,args.param_not_gt,\
                     args.true_scores_init,args.bias_init,args.diffs_init,args.incons_init)
+        startEpoch=1
+    elif args.start_mode == "iter_init":
+        model.init(trainSet,args.dataset,args.score_dis,args.param_not_gt,\
+                    args.true_scores_init,args.bias_init,args.diffs_init,args.incons_init,iterInit=True)
         startEpoch=1
     elif args.start_mode == "fine_tune":
         init_path = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,args.init_id)),key=processResults.findNumbers)[-1]
@@ -317,7 +340,7 @@ def main(argv=None):
     #Write the parameters of the model and its confidence interval in a csv file
     loss = model(trainSet)
 
-    paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch=0,scoresDis=args.score_dis,score_min=args.score_min,score_max=args.score_max)
+    paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch=0,scoresDis=args.score_dis,score_min=args.score_min,score_max=args.score_max,nb_video_per_content=nb_video_per_content)
 
     if not args.only_init:
         #Getting the contructor and the kwargs for the choosen optimizer
@@ -331,9 +354,9 @@ def main(argv=None):
 
         model.setPrior(args.prior,args.dataset)
 
-        loss,epoch = train(model,optimConst,kwargs,trainSet, args,startEpoch=startEpoch)
+        loss,epoch = train(model,optimConst,kwargs,trainSet, args,startEpoch=startEpoch,nb_video_per_content=nb_video_per_content)
         torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
-        paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max)
+        paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max,nb_video_per_content=nb_video_per_content)
 
 if __name__ == "__main__":
     main()
