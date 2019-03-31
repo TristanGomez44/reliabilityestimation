@@ -20,10 +20,14 @@ import configparser
 
 import generateData
 import os
+
+import train
+
+import torch.optim as optim
 class MLE(nn.Module):
     ''' Implement all the models proposed in our paper including the one proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
 
-    def __init__(self,videoNb,annotNb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep):
+    def __init__(self,videoNb,annotNb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,nb_video_per_content):
         '''
         Args:
             videoNb (int): the total number of video
@@ -43,11 +47,10 @@ class MLE(nn.Module):
 
         contentNb = len(distorNbList)
 
-        self.bias = nn.Parameter(torch.ones(annotNb))
-        self.incons  = nn.Parameter(torch.ones(annotNb))
-        self.diffs  = nn.Parameter(torch.ones(contentNb*(polyDeg+1)))
-
-        self.trueScores  = nn.Parameter(torch.ones(videoNb))
+        self.trueScores  = nn.Parameter(torch.ones(videoNb).double())
+        self.bias = nn.Parameter(torch.ones(annotNb).double())
+        self.incons  = nn.Parameter(torch.ones(annotNb).double())
+        self.diffs  = nn.Parameter(torch.ones(contentNb*(polyDeg+1)).double())
 
         self.annotNb = annotNb
         self.videoNb = videoNb
@@ -72,6 +75,10 @@ class MLE(nn.Module):
 
         self.extr_sco_dep = extr_sco_dep
 
+        if not nb_video_per_content is None:
+            self.vidInds = torch.arange(videoNb)
+            self.nb_video_per_content = nb_video_per_content
+
     def forward(self,scoreMat):
         '''Compute the negative log probability of the data according to the model
         Args:
@@ -88,41 +95,51 @@ class MLE(nn.Module):
             else:
                 self.priorUpdateCount += 1
 
-        x = scoreMat.float()
+        x = scoreMat.double()
         scoresDis = self.compScoreDis(x.is_cuda)
 
-        if self.score_dis == "Beta":
-            x = generateData.betaNormalize(x,self.score_min,self.score_max,rawScore=True)
+        x = generateData.betaNormalize(x,self.score_min,self.score_max,rawScore=True)
 
-        log_prob = scoresDis.log_prob(x.unsqueeze(2)).sum()
+        log_prob = scoresDis.log_prob(x).sum()
 
-        return -log_prob
+        return log_prob
 
     def compScoreDis(self,x_is_cuda):
         '''Build the raw scores distributions
         Args:
             x_is_cuda (bool): whether or not to use cuda
         '''
-        amb_incon = self.ambInconsMatrix(x_is_cuda)
+
         scor_bias = self.trueScoresBiasMatrix()
+
+        scor_bias = torch.clamp(scor_bias,self.score_min+0.001,self.score_max-0.001)
+
+        amb_incon = self.ambInconsMatrix(x_is_cuda,scor_bias)
+
+        scor_bias = generateData.betaNormalize(scor_bias,self.score_min,self.score_max)
+        amb_incon = generateData.betaNormalize(amb_incon,self.score_min,self.score_max,variance=True)
+        #The variance of the beta distribution can not be too big
+        #This line clamps it value
+        #print(torch.min(amb_incon, scor_bias*(1-scor_bias)-0.0001))
+        amb_incon = torch.max(torch.min(amb_incon, scor_bias*(1-scor_bias)-0.0001), torch.tensor([0.00001]).expand_as(amb_incon).double())
 
         if self.score_dis == "Beta":
 
-            scor_bias = torch.clamp(scor_bias,self.score_min+0.001,self.score_max-0.001)
-            scor_bias = generateData.betaNormalize(scor_bias,self.score_min,self.score_max)
+            #print("Forward")
+            #print(self.bias)
 
-            alpha,beta = generateData.meanvar_to_alphabeta(scor_bias,amb_incon/self.div_beta_var)
-
-            scoresDis = Beta(alpha.unsqueeze(2),beta.unsqueeze(2))
+            alpha,beta = generateData.meanvar_to_alphabeta(scor_bias*0.0001+0.5,amb_incon*0.00001+0.01)
+            #print(alpha,beta)
+            scoresDis = Beta(alpha,beta)
 
         elif self.score_dis == "Normal":
-            scoresDis = Normal(scor_bias.unsqueeze(2),amb_incon.unsqueeze(2))
+            scoresDis = Normal(scor_bias,amb_incon)
         else:
             raise ValueError("Unknown score distribution : {}".format(self.score_dis))
 
         return scoresDis
 
-    def ambInconsMatrix(self,xIsCuda):
+    def ambInconsMatrix(self,xIsCuda,meanMat):
         '''Computes the variances of the raw score distributions according to the model.
 
         The result is a matrix where each cell is the variance of a raw score density
@@ -141,7 +158,7 @@ class MLE(nn.Module):
         amb = torch.cat(tmp,dim=1).permute(1,0)
 
         vid_means = self.trueScores.unsqueeze(1).expand(self.trueScores.size(0),self.polyDeg+1)
-        powers = torch.arange(self.polyDeg+1).float()
+        powers = torch.arange(self.polyDeg+1).double()
         if xIsCuda:
             powers = powers.cuda()
         powers = powers.unsqueeze(1).permute(1,0).expand(vid_means.size(0),self.polyDeg+1)
@@ -156,7 +173,6 @@ class MLE(nn.Module):
             amb_sq = amb_sq*(-(self.trueScores-self.score_min)*(self.trueScores-self.score_max))
             amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
 
-            meanMat = self.trueScoresBiasMatrix()
             incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
             incon_sq = incon_sq*(-(meanMat-self.score_min)*(meanMat-self.score_max))
 
@@ -173,13 +189,22 @@ class MLE(nn.Module):
 
         '''
 
+        if not self.nb_video_per_content is None:
+            trueScores = torch.zeros(len(self.trueScores)).double()
+
+            trueScores[self.vidInds%self.nb_video_per_content == 0] = self.score_max
+            trueScores[self.vidInds%self.nb_video_per_content != 0] = self.trueScores[self.vidInds%self.nb_video_per_content != 0]
+
+        else:
+            trueScores = self.trueScores
+
         #Matrix containing the sum of all (video_scor,annot_bias) possible pairs
-        scor = self.trueScores.unsqueeze(1).expand(self.videoNb,self.annotNb)
+        scor = trueScores.unsqueeze(1).expand(self.videoNb,self.annotNb)
         bias = self.bias.unsqueeze(0).expand(self.videoNb, self.annotNb)
 
         return scor+bias
 
-    def init(self,scoreMat,datasetName,score_dis,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init):
+    def init(self,scoreMat,datasetName,score_dis,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init,iterInit=False):
         ''' Initialise the parameters of the model using ground-truth or approximations only based on data
         Args:
             scoreMat (torch.tensor): the score matrix to train on
@@ -191,6 +216,7 @@ class MLE(nn.Module):
             bias_init (str): same than true_scores_init, but with biases.
             diffs_init (str): same than true_scores_init, but with difficulties.
             incons_init (str): same than true_scores_init, but with inconsistencies.
+            iterInit (bool): indicates if the parameter initialisation is done with the iterative method or not.
         '''
 
         paramNameList = list(self.state_dict().keys())
@@ -206,7 +232,7 @@ class MLE(nn.Module):
 
             for key in paramNameList:
 
-                tensor = torch.tensor(gtParamDict[key]).view(getattr(self,key).size()).float()
+                tensor = torch.tensor(gtParamDict[key]).view(getattr(self,key).size()).double()
 
                 oriSize = tensor.size()
                 tensor = tensor.view(-1)
@@ -216,26 +242,62 @@ class MLE(nn.Module):
                 if (key == "incons" or key == "diffs") and score_dis=="Beta":
                     tensor = torch.log(tensor/(1-tensor))
 
-                setattr(self,key,nn.Parameter(tensor))
+                setattr(self,key,nn.Parameter(tensor.double()))
 
         functionNameDict = {'bias':bias_init,'trueScores':true_scores_init,'diffs':diffs_init,'incons':incons_init}
 
-        for key in paramNotGT:
+        if iterInit and len(paramNotGT) == len(paramNameList):
 
-            initFunc = getattr(self,functionNameDict[key])
+            self.iterativeInit(scoreMat)
+        else:
 
-            tensor = initFunc(scoreMat)
-            if (key == "incons" or key == "diffs") and score_dis=="Beta":
-                tensor = torch.log(tensor/(1-tensor))
+            for key in paramNotGT:
 
-            setattr(self,key,nn.Parameter(tensor))
+                initFunc = getattr(self,functionNameDict[key])
+
+                tensor = initFunc(scoreMat)
+                if (key == "incons" or key == "diffs") and score_dis=="Beta":
+                    tensor = torch.log(tensor/(1-tensor))
+
+                setattr(self,key,nn.Parameter(tensor))
+
+    def iterativeInit(self,scoreMat):
+
+        print("Iterative init")
+
+        #print(self.trueScores)
+        self.trueScores = nn.Parameter(self.tsInitBase(scoreMat))
+        #print(self.trueScores)
+        self.bias = nn.Parameter(self.bInitBase(scoreMat))
+        self.incons = nn.Parameter(self.iInitBase(scoreMat))
+        self.diffs = nn.Parameter(self.dInitBase(scoreMat))
+
+        i=0
+        maxIt = 10
+        minDist = 0.0001
+        dist = minDist+1
+        while i<maxIt and dist>minDist:
+
+            oldFlatParam = torch.cat((self.trueScores.detach().clone(),self.bias.detach().clone(),self.incons.detach().clone(),self.diffs.detach().clone()),dim=0)
+
+            #print(self.trueScores)
+            self.trueScores = nn.Parameter(self.tsInitBase(scoreMat))
+            #print(self.trueScores)
+            self.bias = nn.Parameter(self.bInitBase(scoreMat))
+            self.incons = nn.Parameter(self.iInitBase(scoreMat))
+            self.diffs = nn.Parameter(self.dInitBase(scoreMat))
+
+            dist = torch.pow(oldFlatParam - torch.cat((self.trueScores,self.bias,self.incons,self.diffs),dim=0),2).sum()
+            print("\t",i,dist)
 
     def tsInitBase(self,scoreMat):
         ''' Compute the mean opinion score for each video. Can be used to initialise the true score vector using only data
         Args:
             scoreMat (torch.tensor): the score matrix
         '''
-        return scoreMat.float().mean(dim=1)
+
+        res = scoreMat.double().mean(dim=1)
+        return res
 
     def bInitBase(self,scoreMat):
         ''' Compute the mean of the difference between true scores and raw scores for every annotator.
@@ -244,7 +306,7 @@ class MLE(nn.Module):
             scoreMat (torch.tensor): the score matrix
         '''
 
-        return (scoreMat.float()-self.trueScores.unsqueeze(1).expand_as(scoreMat)).mean(dim=0)
+        return (scoreMat.double()-self.trueScores.unsqueeze(1).expand_as(scoreMat)).mean(dim=0)
 
     def dInitBase(self,scoreMat):
         '''Compute the standard deviation of scores given to every content.
@@ -253,7 +315,7 @@ class MLE(nn.Module):
             scoreMat (torch.tensor): the score matrix
         '''
 
-        video_amb = torch.pow(self.trueScoresBiasMatrix()-scoreMat.float(),2).mean(dim=1)
+        video_amb = torch.pow(self.trueScoresBiasMatrix()-scoreMat.double(),2).mean(dim=1)
 
         content_amb = torch.zeros(len(self.distorNbList)*(self.polyDeg+1))
         sumInd = 0
@@ -263,8 +325,10 @@ class MLE(nn.Module):
             content_amb[i] = torch.sqrt(video_amb[sumInd:sumInd+self.distorNbList[i]].mean())
             sumInd += self.distorNbList[i]
 
+        #Setting min to 0 or the variance is always estimated too big
+        content_amb = (content_amb-content_amb.min())
         #Clamping because std of data can be bigger than 1 and for numerical stability
-        return torch.clamp(content_amb,0.01,0.99)
+        return torch.clamp(content_amb,0.01,0.99).double()
 
     def iInitBase(self,scoreMat):
         '''Compute the standard deviation of scores given by every annotators.
@@ -273,10 +337,12 @@ class MLE(nn.Module):
             scoreMat (torch.tensor): the score matrix
         '''
 
-        res = torch.sqrt((torch.pow(self.trueScoresBiasMatrix()-scoreMat.float(),2)).mean(dim=0))
-        #Clamping because std of data can be bigger than 1 and for numerical stability
-        res = torch.clamp(res,0.01,0.99)
+        res = torch.sqrt((torch.pow(self.trueScoresBiasMatrix()-scoreMat.double(),2)).mean(dim=0))
 
+        #Setting min to 0 or the variance is always estimated too big
+        res = (res-res.min())
+        #Clamping because std of data can be bigger than 1 and for numerical stability
+        res = torch.clamp(res,0.01,0.99).double()
         return res
 
     def updateEmpirical(self):
@@ -287,16 +353,13 @@ class MLE(nn.Module):
 
         '''
 
-        self.bias  = torch.cat((self.bias_freez,self.bias_opti),dim=0)
-        self.incons  = torch.cat((self.incons_freez,self.incons_opti),dim=0)
-        self.diffs = torch.cat((self.diffs_freez,self.diffs_opti),dim=0)
-
         for key in self.paramProc.keys():
 
             if key == "bias":
-                self.disDict["bias"] = Normal(torch.zeros(1), np.power(getattr(self,key).std().detach().numpy(),2)*torch.eye(1))
-            else:
 
+                self.disDict["bias"] = Normal(torch.zeros(1).double(), torch.pow(torch.std(self.bias),2)*torch.eye(1).double())
+
+            else:
                 sigTensor = torch.sigmoid(getattr(self,key))
                 mean,var = sigTensor.mean(),torch.pow(sigTensor.std(),2)
                 alpha,beta = generateData.meanvar_to_alphabeta(mean,var)
@@ -313,7 +376,8 @@ class MLE(nn.Module):
         for param in self.disDict.keys():
             procFunc = self.paramProc[param]
             #Apply a preprocessing function (like sigmoid for the inconsistencies and difficulties) and computes the log prob.
-            loss -= self.disDict[param].log_prob(procFunc(getattr(self,param+"_opti"))).sum()
+
+            loss -= self.disDict[param].log_prob(procFunc(getattr(self,param))).mean()
 
         return loss
 
@@ -337,7 +401,7 @@ class MLE(nn.Module):
 
         for param in self.disDict.keys():
             procFunc = self.paramProc[param]
-            loss -= self.disDict[param].log_prob(procFunc(getattr(self,param+"_opti"))).sum()
+            loss -= self.disDict[param].log_prob(procFunc(getattr(self,param))).sum()
 
         return loss
 
@@ -484,7 +548,7 @@ def MOS(scoreMat,z_score,sub_rej):
 
     '''
 
-    data = scoreMat.float()
+    data = scoreMat.double()
 
     if sub_rej:
         rejList = subRej(data)
@@ -508,7 +572,7 @@ def MOS(scoreMat,z_score,sub_rej):
 
     return mos_mean.numpy(),mos_conf.numpy()
 
-def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep):
+def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,nb_video_per_content):
     '''Build a model
     Args:
         annot_nb (int): the number of annotators
@@ -530,7 +594,7 @@ def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_
         the built model
     '''
 
-    model = MLE(nbVideos,annot_nb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep)
+    model = MLE(nbVideos,annot_nb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,nb_video_per_content)
     return model
 
 if __name__ == '__main__':
