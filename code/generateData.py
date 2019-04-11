@@ -21,12 +21,15 @@ import matplotlib.cm as cm
 import os
 def main(argv=None):
 
-
     #Getting arguments from config file and command line
     #Building the arg reader
     argreader = ArgReader(argv)
 
-    argreader.parser.add_argument('--bias_std', metavar='STD',type=float,default=0.25,help='The standard deviation of the bias gaussian distribution')
+    argreader.parser.add_argument('--bias_dis', metavar='STD',type=str,default='Beta',help='The bias distribution. Can be \'Beta\' or \'Normal\'')
+
+    argreader.parser.add_argument('--bias_std', metavar='STD',type=float,default=0.25,help='The standard deviation of the bias gaussian distribution. Ignored if bias are sampled from a beta distribution')
+    argreader.parser.add_argument('--bias_ampl', metavar='STD',type=float,default=2,help='The amplitude of the bias gaussian distribution. Ignored if bias are sampled from a normal distribution')
+
     argreader.parser.add_argument('--incons_alpha', metavar='STD',type=float,default=1,help='The alpha parameter of the inconsistency beta distribution')
     argreader.parser.add_argument('--incons_beta', metavar='STD',type=float,default=10,help='The beta parameter of the inconsistency beta distribution')
     argreader.parser.add_argument('--diff_alpha', metavar='STD',type=float,default=1,help='The alpha parameter of the difficulty beta distribution')
@@ -65,7 +68,13 @@ def main(argv=None):
         trueScoreDis = Uniform(args.score_min,args.score_max)
         diffDis = Beta(args.diff_alpha, args.diff_beta)
         inconsDis = Beta(args.incons_alpha, args.incons_beta)
-        biasDis = Normal(torch.zeros(1), args.bias_std*torch.eye(1))
+
+        if args.bias_dis == "Normal":
+            biasDis = Normal(torch.zeros(1), args.bias_std*torch.eye(1))
+        elif args.bias_dis == "Beta":
+            biasDis = Beta(2,2)
+        else:
+            raise ValueError("Unkown bias distribution : ",args.bias_dis)
 
         nb_videos = args.nb_video_per_content*args.nb_content
 
@@ -74,6 +83,9 @@ def main(argv=None):
         diffs = diffDis.sample((args.nb_content,)).double()
         incons = inconsDis.sample((args.nb_annot,)).double()
         bias = biasDis.sample((args.nb_annot,)).double()
+
+        if args.bias_dis == "Beta":
+            bias = (bias-0.5)*args.bias_ampl
 
         #Sort the true score and the bias for better visualisation
         trueScores = trueScores.sort()[0]
@@ -216,7 +228,8 @@ def main(argv=None):
                     sys.exit(0)
 
                 cdf = lambda x: torch.exp(scoresDis.log_prob(x.double()))
-                densityAxis.plot(x_coord.numpy(),cdf(x_coord)[0].cpu().detach().numpy(),color=colors[i],marker=markers[j])
+
+                densityAxis.plot(x_coord.numpy(),cdf(x_coord).cpu().detach().numpy(),color=colors[i],marker=markers[j])
                 #densityAxis.set_xticks(betaNormalize(scores,args.score_min,args.score_max))
                 #densityAxis.set_xticklabels(scores)
                 densityAxis.set_ylim(0,20)
@@ -258,7 +271,7 @@ def main(argv=None):
         np.savetxt("../data/{}_trueScores.csv".format(args.dataset_id),trueScores.numpy(),delimiter="\t")
         np.savetxt("../data/{}_diffs.csv".format(args.dataset_id),diffs.numpy(),delimiter="\t")
         np.savetxt("../data/{}_incons.csv".format(args.dataset_id),incons.numpy(),delimiter="\t")
-        np.savetxt("../data/{}_bias.csv".format(args.dataset_id),bias[:,0,0].numpy(),delimiter="\t")
+        np.savetxt("../data/{}_bias.csv".format(args.dataset_id),bias.numpy(),delimiter="\t")
 
         print("Finished generating {}".format(args.dataset_id))
 
