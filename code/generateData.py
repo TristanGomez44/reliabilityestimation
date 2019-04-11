@@ -44,8 +44,6 @@ def main(argv=None):
     argreader.parser.add_argument('--init_from',metavar='DATASETNAME',type=str,help='A new dataset can be created by removing lines or columns from of previously created one. \
                                   This argument allow this and its value should be the name of the older dataset.')
 
-
-    argreader.parser.add_argument('--sort_param',action='store_true',help='To sort the parameters when generating them. Helps for a better visualisation')
     #Reading the comand line arg
     argreader.getRemainingArgs()
 
@@ -72,17 +70,14 @@ def main(argv=None):
         nb_videos = args.nb_video_per_content*args.nb_content
 
         trueScores = trueScoreDis.sample((nb_videos,)).double()
-        if args.ref_vid_to_score_max == True:
-            trueScores[torch.arange(len(trueScores))%args.nb_video_per_content == 0] = args.score_max
 
         diffs = diffDis.sample((args.nb_content,)).double()
         incons = inconsDis.sample((args.nb_annot,)).double()
         bias = biasDis.sample((args.nb_annot,)).double()
 
-        if args.sort_param:
-            #Sort the true score and the bias for better visualisation
-            trueScores = trueScores.sort()[0]
-            bias = bias.sort(dim=0)[0]
+        #Sort the true score and the bias for better visualisation
+        trueScores = trueScores.sort()[0]
+        bias = bias.sort(dim=0)[0]
 
         scoreMat = torch.zeros((nb_videos,args.nb_annot))
 
