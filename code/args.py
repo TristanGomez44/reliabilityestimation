@@ -111,10 +111,6 @@ class ArgReader():
                             help='the id of the experience')
         self.parser.add_argument('--dataset', type=str, metavar='N',help='the dataset to use. Can be \'NETFLIX\', \'IRCCYN\' or \'VQEG\'.')
 
-
-        self.parser.add_argument('--poly_deg', type=int, metavar='S',
-                            help='The polynomial degree to use to model video ambiguity as a function of video mean score')
-
         self.parser.add_argument('--cuda', type=str2bool, metavar='S',
                             help='To run computations on the gpu')
         self.parser.add_argument('--optim', type=str, metavar='OPTIM',
@@ -172,8 +168,9 @@ class ArgReader():
                             help='Whether or not to add a dependency between the variance and the mean of videos. If true, raw score variance of videos with very high or very low scores\
                             will be lower.')
 
-        self.parser.add_argument('--ref_vid_to_score_max', type=str2bool, metavar='S',
-                            help='Whether or not to set the score of reference video to the maximum score (because the quality cannot be better).')
+        self.parser.add_argument('--truescores_tanh', type=str2bool, metavar='S',
+                            help='To pass the true scores through a tanh during optimisation.')
+
 
         self.args = None
 

@@ -24,16 +24,19 @@ import os
 import train
 
 import torch.optim as optim
+
+def artanh(y):
+    return 0.5*(torch.log(1+y)/(1-y))
+
 class MLE(nn.Module):
     ''' Implement all the models proposed in our paper including the one proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
 
-    def __init__(self,videoNb,annotNb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,nb_video_per_content):
+    def __init__(self,videoNb,annotNb,distorNbList,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,truescores_tanh):
         '''
         Args:
             videoNb (int): the total number of video
             annotNb (int): the number of annotators
             distorNbList (list): the number of videos for each reference videos, in the same order than in the dataset.
-            polyDeg (int): the degree of the polynom used to model video ambiguities. E.g. 0 makes the video ambiguity depends only on the content
             scoresDis (str): the score distribution used
             score_min (int): the minimum score that can be given to a video
             score_max (int): the maximum score that can be given to a video
@@ -50,13 +53,12 @@ class MLE(nn.Module):
         self.trueScores  = nn.Parameter(torch.ones(videoNb).double())
         self.bias = nn.Parameter(torch.ones(annotNb).double())
         self.incons  = nn.Parameter(torch.ones(annotNb).double())
-        self.diffs  = nn.Parameter(torch.ones(contentNb*(polyDeg+1)).double())
+        self.diffs  = nn.Parameter(torch.ones(contentNb).double())
 
         self.annotNb = annotNb
         self.videoNb = videoNb
         self.contentNb = contentNb
 
-        self.polyDeg = polyDeg
         self.distorNbList = distorNbList
 
         self.score_min = score_min
@@ -74,10 +76,7 @@ class MLE(nn.Module):
         self.priorUpdateFrequ = priorUpdateFrequ
 
         self.extr_sco_dep = extr_sco_dep
-
-        if not nb_video_per_content is None:
-            self.vidInds = torch.arange(videoNb)
-            self.nb_video_per_content = nb_video_per_content
+        self.truescores_tanh = truescores_tanh
 
     def forward(self,scoreMat):
         '''Compute the negative log probability of the data according to the model
@@ -148,25 +147,16 @@ class MLE(nn.Module):
             x_is_cuda (bool): whether or not to use cuda
         '''
 
-        self.diffs_mat = self.diffs.view(self.contentNb,self.polyDeg+1)
+        self.diffs_mat = self.diffs.view(self.contentNb)
 
         #Matrix containing the sum of all (video_amb,annot_incons) possible pairs
         tmp = []
         for i in range(self.contentNb):
-            tmp.append(torch.sigmoid(self.diffs_mat[i]).unsqueeze(1).expand(self.polyDeg+1,self.distorNbList[i]))
+            tmp.append(torch.sigmoid(self.diffs_mat[i]).expand(self.distorNbList[i]))
 
-        amb = torch.cat(tmp,dim=1).permute(1,0)
+        amb = torch.cat(tmp,dim=0)
 
-        vid_means = self.trueScores.unsqueeze(1).expand(self.trueScores.size(0),self.polyDeg+1)
-        powers = torch.arange(self.polyDeg+1).double()
-        if xIsCuda:
-            powers = powers.cuda()
-        powers = powers.unsqueeze(1).permute(1,0).expand(vid_means.size(0),self.polyDeg+1)
-        vid_means_pow = torch.pow(vid_means,powers)
-
-        amb_pol = (amb*vid_means_pow).sum(dim=1)
-
-        amb_sq = torch.pow(amb_pol,2)
+        amb_sq = torch.pow(amb,2)
         incon_sq = torch.pow(torch.sigmoid(self.incons),2)
 
         if self.extr_sco_dep:
@@ -189,12 +179,8 @@ class MLE(nn.Module):
 
         '''
 
-        if not self.nb_video_per_content is None:
-            trueScores = torch.zeros(len(self.trueScores)).double()
-
-            trueScores[self.vidInds%self.nb_video_per_content == 0] = self.score_max
-            trueScores[self.vidInds%self.nb_video_per_content != 0] = self.trueScores[self.vidInds%self.nb_video_per_content != 0]
-
+        if self.truescores_tanh and self.score_dis =="Beta":
+            trueScores = torch.tanh(self.trueScores)*(self.score_max-self.score_min)/2+(self.score_min+self.score_max)/2
         else:
             trueScores = self.trueScores
 
@@ -204,7 +190,7 @@ class MLE(nn.Module):
 
         return scor+bias
 
-    def init(self,scoreMat,datasetName,score_dis,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init,iterInit=False):
+    def init(self,scoreMat,datasetName,score_dis,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init,truescores_tanh,iterInit=False):
         ''' Initialise the parameters of the model using ground-truth or approximations only based on data
         Args:
             scoreMat (torch.tensor): the score matrix to train on
@@ -241,6 +227,9 @@ class MLE(nn.Module):
 
                 if (key == "incons" or key == "diffs") and score_dis=="Beta":
                     tensor = torch.log(tensor/(1-tensor))
+                if key == "trueScores" and score_dis == "Beta" and truescores_tanh:
+                    tensor = 2*(tensor-(self.score_min+self.score_max)/2)/(self.score_max-self.score_min)
+                    tensor = artanh(tensor)
 
                 setattr(self,key,nn.Parameter(tensor.double()))
 
@@ -258,6 +247,9 @@ class MLE(nn.Module):
                 tensor = initFunc(scoreMat)
                 if (key == "incons" or key == "diffs") and score_dis=="Beta":
                     tensor = torch.log(tensor/(1-tensor))
+                if key == "trueScores" and score_dis == "Beta" and truescores_tanh:
+                    tensor = 2*(tensor-(self.score_min+self.score_max)/2)/(self.score_max-self.score_min)
+                    tensor = artanh(tensor)
 
                 setattr(self,key,nn.Parameter(tensor))
 
@@ -308,6 +300,17 @@ class MLE(nn.Module):
 
         return (scoreMat.double()-self.trueScores.unsqueeze(1).expand_as(scoreMat)).mean(dim=0)
 
+    def bInitZero(self,scoreMat):
+        ''' Compute a vector of zero to init the biases.
+        Can be used like bsInitBase
+        Args:
+            scoreMat (torch.tensor): the score matrix
+        '''
+
+        return torch.zeros_like(self.bias)
+
+
+
     def dInitBase(self,scoreMat):
         '''Compute the standard deviation of scores given to every content.
         Can be used to initialise the difficulties vector, like tsInitBase
@@ -317,7 +320,7 @@ class MLE(nn.Module):
 
         video_amb = torch.pow(self.trueScoresBiasMatrix()-scoreMat.double(),2).mean(dim=1)
 
-        content_amb = torch.zeros(len(self.distorNbList)*(self.polyDeg+1))
+        content_amb = torch.zeros(len(self.distorNbList))
         sumInd = 0
 
         for i in range(len(self.distorNbList)):
@@ -572,14 +575,12 @@ def MOS(scoreMat,z_score,sub_rej):
 
     return mos_mean.numpy(),mos_conf.numpy()
 
-def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,nb_video_per_content):
+def modelMaker(annot_nb,nbVideos,distorNbList,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,truescores_tanh):
     '''Build a model
     Args:
         annot_nb (int): the number of annotators
         nbVideos (int): the total number of video
         distorNbList (list): the number of videos for each reference videos, in the same order than in the dataset.
-        polyDeg (int): the degree of the polynom used to model video ambiguities. E.g. 0 makes the video ambiguity depends only on the content
-
         scoresDis (str): the score distribution used
         score_min (int): the minimum score that can be given to a video
         score_max (int): the maximum score that can be given to a video
@@ -594,7 +595,7 @@ def modelMaker(annot_nb,nbVideos,distorNbList,polyDeg,score_dis,score_min,score_
         the built model
     '''
 
-    model = MLE(nbVideos,annot_nb,distorNbList,polyDeg,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,nb_video_per_content)
+    model = MLE(nbVideos,annot_nb,distorNbList,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,truescores_tanh)
     return model
 
 if __name__ == '__main__':
