@@ -26,12 +26,12 @@ import train
 import torch.optim as optim
 
 def artanh(y):
-    return 0.5*(torch.log(1+y)/(1-y))
+    return 0.5*(torch.log(1+y)-torch.log(1-y))
 
 class MLE(nn.Module):
     ''' Implement all the models proposed in our paper including the one proposed in Zhi et al. (2017) : Recover Subjective Quality Scores from Noisy Measurements'''
 
-    def __init__(self,videoNb,annotNb,distorNbList,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,truescores_tanh):
+    def __init__(self,videoNb,annotNb,distorNbList,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,truescores_tanh,bias_tanh,bias_ampl):
         '''
         Args:
             videoNb (int): the total number of video
@@ -77,6 +77,8 @@ class MLE(nn.Module):
 
         self.extr_sco_dep = extr_sco_dep
         self.truescores_tanh = truescores_tanh
+        self.bias_tanh = bias_tanh
+        self.bias_ampl = bias_ampl
 
     def forward(self,scoreMat):
         '''Compute the negative log probability of the data according to the model
@@ -101,7 +103,7 @@ class MLE(nn.Module):
 
         log_prob = scoresDis.log_prob(x).sum()
 
-        return log_prob
+        return -log_prob
 
     def compScoreDis(self,x_is_cuda):
         '''Build the raw scores distributions
@@ -127,7 +129,9 @@ class MLE(nn.Module):
             #print("Forward")
             #print(self.bias)
 
-            alpha,beta = generateData.meanvar_to_alphabeta(scor_bias*0.0001+0.5,amb_incon*0.00001+0.01)
+            #alpha,beta = generateData.meanvar_to_alphabeta(scor_bias*0.0001+0.5,amb_incon*0.00001+0.01)
+            alpha,beta = generateData.meanvar_to_alphabeta(scor_bias,amb_incon)
+
             #print(alpha,beta)
             scoresDis = Beta(alpha,beta)
 
@@ -160,7 +164,7 @@ class MLE(nn.Module):
         incon_sq = torch.pow(torch.sigmoid(self.incons),2)
 
         if self.extr_sco_dep:
-            amb_sq = amb_sq*(-(self.trueScores-self.score_min)*(self.trueScores-self.score_max))
+            amb_sq = amb_sq*(-(self.getTrueScores()-self.score_min)*(self.getTrueScores()-self.score_max))
             amb_sq = amb_sq.unsqueeze(1).expand(self.videoNb, self.annotNb)
 
             incon_sq = incon_sq.unsqueeze(0).expand(self.videoNb, self.annotNb)
@@ -172,6 +176,14 @@ class MLE(nn.Module):
 
         return amb_sq+incon_sq
 
+    def getTrueScores(self):
+
+        if self.truescores_tanh and self.score_dis =="Beta":
+            trueScores = torch.tanh(self.trueScores)*(self.score_max-self.score_min)/2+(self.score_min+self.score_max)/2
+        else:
+            trueScores = self.trueScores
+        return trueScores
+
     def trueScoresBiasMatrix(self):
         '''Computes the means of the raw score distributions according to the model.
 
@@ -179,18 +191,14 @@ class MLE(nn.Module):
 
         '''
 
-        if self.truescores_tanh and self.score_dis =="Beta":
-            trueScores = torch.tanh(self.trueScores)*(self.score_max-self.score_min)/2+(self.score_min+self.score_max)/2
-        else:
-            trueScores = self.trueScores
+        trueScores = self.getTrueScores()
 
-        #Matrix containing the sum of all (video_scor,annot_bias) possible pairs
         scor = trueScores.unsqueeze(1).expand(self.videoNb,self.annotNb)
         bias = self.bias.unsqueeze(0).expand(self.videoNb, self.annotNb)
 
         return scor+bias
 
-    def init(self,scoreMat,datasetName,score_dis,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init,truescores_tanh,iterInit=False):
+    def init(self,scoreMat,datasetName,score_dis,paramNotGT,true_scores_init,bias_init,diffs_init,incons_init,truescores_tanh,bias_tanh,bias_ampl,iterInit=False):
         ''' Initialise the parameters of the model using ground-truth or approximations only based on data
         Args:
             scoreMat (torch.tensor): the score matrix to train on
@@ -224,14 +232,7 @@ class MLE(nn.Module):
                 tensor = tensor.view(-1)
 
                 tensor = tensor.view(oriSize)
-
-                if (key == "incons" or key == "diffs") and score_dis=="Beta":
-                    tensor = torch.log(tensor/(1-tensor))
-                if key == "trueScores" and score_dis == "Beta" and truescores_tanh:
-                    tensor = 2*(tensor-(self.score_min+self.score_max)/2)/(self.score_max-self.score_min)
-                    tensor = artanh(tensor)
-
-                setattr(self,key,nn.Parameter(tensor.double()))
+                self.preprocessAndSet(tensor, key,score_dis,truescores_tanh,bias_tanh,bias_ampl)
 
         functionNameDict = {'bias':bias_init,'trueScores':true_scores_init,'diffs':diffs_init,'incons':incons_init}
 
@@ -243,44 +244,26 @@ class MLE(nn.Module):
             for key in paramNotGT:
 
                 initFunc = getattr(self,functionNameDict[key])
-
                 tensor = initFunc(scoreMat)
-                if (key == "incons" or key == "diffs") and score_dis=="Beta":
-                    tensor = torch.log(tensor/(1-tensor))
-                if key == "trueScores" and score_dis == "Beta" and truescores_tanh:
-                    tensor = 2*(tensor-(self.score_min+self.score_max)/2)/(self.score_max-self.score_min)
-                    tensor = artanh(tensor)
+                self.preprocessAndSet(tensor, key,score_dis,truescores_tanh,bias_tanh,bias_ampl)
 
-                setattr(self,key,nn.Parameter(tensor))
 
-    def iterativeInit(self,scoreMat):
 
-        print("Iterative init")
+    def preprocessAndSet(self,tensor, key,score_dis,truescores_tanh,bias_tanh,bias_ampl):
 
-        #print(self.trueScores)
-        self.trueScores = nn.Parameter(self.tsInitBase(scoreMat))
-        #print(self.trueScores)
-        self.bias = nn.Parameter(self.bInitBase(scoreMat))
-        self.incons = nn.Parameter(self.iInitBase(scoreMat))
-        self.diffs = nn.Parameter(self.dInitBase(scoreMat))
+        if (key == "incons" or key == "diffs") and score_dis=="Beta":
+            tensor = torch.log(tensor/(1-tensor))
+        if key == "trueScores" and score_dis == "Beta" and truescores_tanh:
 
-        i=0
-        maxIt = 10
-        minDist = 0.0001
-        dist = minDist+1
-        while i<maxIt and dist>minDist:
+            tensor = torch.clamp(tensor,self.score_min+0.01,self.score_max-0.01)
 
-            oldFlatParam = torch.cat((self.trueScores.detach().clone(),self.bias.detach().clone(),self.incons.detach().clone(),self.diffs.detach().clone()),dim=0)
+            tensor = 2*(tensor-(self.score_min+self.score_max)/2)/(self.score_max-self.score_min)
+            tensor = artanh(tensor)
+        if key == "bias" and score_dis == "Beta" and bias_tanh:
+            tensor /= bias_ampl
+            tensor = artanh(tensor)
 
-            #print(self.trueScores)
-            self.trueScores = nn.Parameter(self.tsInitBase(scoreMat))
-            #print(self.trueScores)
-            self.bias = nn.Parameter(self.bInitBase(scoreMat))
-            self.incons = nn.Parameter(self.iInitBase(scoreMat))
-            self.diffs = nn.Parameter(self.dInitBase(scoreMat))
-
-            dist = torch.pow(oldFlatParam - torch.cat((self.trueScores,self.bias,self.incons,self.diffs),dim=0),2).sum()
-            print("\t",i,dist)
+        setattr(self,key,nn.Parameter(tensor))
 
     def tsInitBase(self,scoreMat):
         ''' Compute the mean opinion score for each video. Can be used to initialise the true score vector using only data
@@ -298,7 +281,9 @@ class MLE(nn.Module):
             scoreMat (torch.tensor): the score matrix
         '''
 
-        return (scoreMat.double()-self.trueScores.unsqueeze(1).expand_as(scoreMat)).mean(dim=0)
+
+
+        return (scoreMat.double()-self.getTrueScores().unsqueeze(1).expand_as(scoreMat)).mean(dim=0)
 
     def bInitZero(self,scoreMat):
         ''' Compute a vector of zero to init the biases.
@@ -476,7 +461,7 @@ class MLE(nn.Module):
     def getFlatParam(self):
         ''' Return a vector with the four parameters vector concatenated (true scores, biases, inconsistencies and difficulties) '''
 
-        return torch.cat((self.trueScores,self.bias,self.incons.view(-1),self.diffs.view(-1)),dim=0)
+        return torch.cat((self.getTrueScores(),self.bias,self.incons.view(-1),self.diffs.view(-1)),dim=0)
 
 def subRej(dataTorch):
     ''' Creates a list of subject to reject based on how far they are from average answer. Comes from ITU-R BT.500: Methodology for the Subjective Assessment of the Quality of
@@ -575,7 +560,7 @@ def MOS(scoreMat,z_score,sub_rej):
 
     return mos_mean.numpy(),mos_conf.numpy()
 
-def modelMaker(annot_nb,nbVideos,distorNbList,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,truescores_tanh):
+def modelMaker(annot_nb,nbVideos,distorNbList,args):
     '''Build a model
     Args:
         annot_nb (int): the number of annotators
@@ -595,7 +580,8 @@ def modelMaker(annot_nb,nbVideos,distorNbList,score_dis,score_min,score_max,div_
         the built model
     '''
 
-    model = MLE(nbVideos,annot_nb,distorNbList,score_dis,score_min,score_max,div_beta_var,priorUpdateFrequ,extr_sco_dep,truescores_tanh)
+    model = MLE(nbVideos,annot_nb,distorNbList,args.score_dis,args.score_min,args.score_max,args.div_beta_var,\
+                args.prior_update_frequ,args.extr_sco_dep,args.truescores_tanh,args.bias_tanh,args.bias_ampl)
     return model
 
 if __name__ == '__main__':
