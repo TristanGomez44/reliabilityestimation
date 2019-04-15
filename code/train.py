@@ -59,7 +59,7 @@ class GradNoise():
             else:
                 return grad + noise.double()
 
-def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max,truescores_tanh):
+def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max,truescores_tanh,bias_tanh,bias_ampl):
 
 
     keys = list(model.state_dict().keys())
@@ -74,6 +74,8 @@ def paramsToCsv(loss,model,exp_id,ind_id,epoch,scoresDis,score_min,score_max,tru
                 tensor = torch.sigmoid(tensor)
             if key == "trueScores" and truescores_tanh:
                 tensor = torch.tanh(model.trueScores)*(score_max-score_min)/2+(score_min+score_max)/2
+            if key == "bias" and bias_tanh:
+                tensor = torch.tanh(model.bias)*bias_ampl
 
         if keys[i] ==  "trueScores":
 
@@ -131,6 +133,7 @@ def one_epoch_train(model,optimizer,trainMatrix, epoch, args,lr):
     else:
 
         optimizer.step()
+
         optimizer.zero_grad()
 
     return loss
@@ -173,7 +176,7 @@ def get_OptimConstructor(optimStr,momentum):
 
     return optimConst,kwargs
 
-def train(model,optimConst,kwargs,trainSet, args,startEpoch,truescores_tanh):
+def train(model,optimConst,kwargs,trainSet, args,startEpoch,truescores_tanh,bias_tanh,bias_ampl):
 
     epoch = startEpoch
     dist = args.stop_crit+1
@@ -215,13 +218,21 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch,truescores_tanh):
                 optimizer = optimConst((getattr(model,paramName+"_opti"),), **kwargs)
 
         for key in oldParam.keys():
+
+            #if key != "trueScores":
+            #    oldParam[key] = getattr(model,key).clone()
+            #else:
+            #    oldParam[key] = model.getTrueScores()
+
             oldParam[key] = getattr(model,key).clone()
+
 
         loss = one_epoch_train(model,optimizer,trainSet,epoch, args,args.lr[lrCounter])
         lossArray[epoch-1] = loss
 
         #Computing distance for all parameters
         for key in oldParam.keys():
+
             distDict[key][epoch-1] = torch.pow(oldParam[key]-getattr(model,key),2).sum()
             distDict["all"][epoch-1] += distDict[key][epoch-1]
         for key in  oldParam.keys():
@@ -232,7 +243,7 @@ def train(model,optimConst,kwargs,trainSet, args,startEpoch,truescores_tanh):
         epoch += 1
 
         if epoch%args.log_interval==0:
-            paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max,truescores_tanh=truescores_tanh)
+            paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max,truescores_tanh=truescores_tanh,bias_tanh=bias_tanh,bias_ampl=bias_ampl)
             torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
 
     #Writing the array in a csv file
@@ -294,9 +305,7 @@ def main(argv=None):
         trainSet = trainSet.cuda()
 
     #Building the model
-    model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,\
-                                    args.score_dis,args.score_min,args.score_max,args.div_beta_var,\
-                                    args.prior_update_frequ,args.extr_sco_dep,args.truescores_tanh)
+    model = modelBuilder.modelMaker(trainSet.size(1),len(trainSet),distorNbList,args)
 
     if args.cuda:
         model = model.cuda()
@@ -304,11 +313,11 @@ def main(argv=None):
     #Inititialise the model
     if args.start_mode == "base_init":
         model.init(trainSet,args.dataset,args.score_dis,args.param_not_gt,\
-                    args.true_scores_init,args.bias_init,args.diffs_init,args.incons_init,truescores_tanh=args.truescores_tanh)
+                    args.true_scores_init,args.bias_init,args.diffs_init,args.incons_init,truescores_tanh=args.truescores_tanh,bias_tanh=args.bias_tanh,bias_ampl=args.bias_ampl)
         startEpoch=1
     elif args.start_mode == "iter_init":
         model.init(trainSet,args.dataset,args.score_dis,args.param_not_gt,\
-                    args.true_scores_init,args.bias_init,args.diffs_init,args.incons_init,truescores_tanh=args.truescores_tanh,iterInit=True)
+                    args.true_scores_init,args.bias_init,args.diffs_init,args.incons_init,truescores_tanh=args.truescores_tanh,bias_tanh=args.bias_tanh,bias_ampl=args.bias_ampl,iterInit=True)
         startEpoch=1
     elif args.start_mode == "fine_tune":
         init_path = sorted(glob.glob("../models/{}/model{}_epoch*".format(args.exp_id,args.init_id)),key=processResults.findNumbers)[-1]
@@ -328,7 +337,7 @@ def main(argv=None):
     #Write the parameters of the model and its confidence interval in a csv file
     loss = model(trainSet)
 
-    paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch=0,scoresDis=args.score_dis,score_min=args.score_min,score_max=args.score_max,truescores_tanh=args.truescores_tanh)
+    paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch=0,scoresDis=args.score_dis,score_min=args.score_min,score_max=args.score_max,truescores_tanh=args.truescores_tanh,bias_tanh=args.bias_tanh,bias_ampl=args.bias_ampl)
 
     if not args.only_init:
         #Getting the contructor and the kwargs for the choosen optimizer
@@ -342,9 +351,9 @@ def main(argv=None):
 
         model.setPrior(args.prior,args.dataset)
 
-        loss,epoch = train(model,optimConst,kwargs,trainSet, args,startEpoch=startEpoch,truescores_tanh=args.truescores_tanh)
+        loss,epoch = train(model,optimConst,kwargs,trainSet, args,startEpoch=startEpoch,truescores_tanh=args.truescores_tanh,bias_tanh=args.bias_tanh,bias_ampl=args.bias_ampl)
         torch.save(model.state_dict(), "../models/{}/model{}_epoch{}".format(args.exp_id,args.ind_id,epoch))
-        paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max,truescores_tanh=args.truescores_tanh)
+        paramsToCsv(loss,model,args.exp_id,args.ind_id,epoch,args.score_dis,args.score_min,args.score_max,truescores_tanh=args.truescores_tanh,bias_tanh=args.bias_tanh,bias_ampl=args.bias_ampl)
 
 if __name__ == "__main__":
     main()
