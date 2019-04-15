@@ -171,6 +171,11 @@ class ArgReader():
         self.parser.add_argument('--truescores_tanh', type=str2bool, metavar='S',
                             help='To pass the true scores through a tanh during optimisation.')
 
+        self.parser.add_argument('--bias_tanh', type=str2bool, metavar='S',
+                            help='To pass the bias through a tanh during optimisation.')
+        self.parser.add_argument('--bias_ampl', metavar='STD',type=float,help='The amplitude of the bias gaussian distribution. Ignored if bias are sampled from a normal distribution')
+
+        self.parser.add_argument('--bias_dis', metavar='STD',type=str,default='Beta',help='The bias distribution. Can be \'Beta\' or \'Normal\'')
 
         self.args = None
 
