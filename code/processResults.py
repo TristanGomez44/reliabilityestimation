@@ -409,6 +409,7 @@ def plotParam(dataset,exp_id,indList,labels):
     '''
 
     paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indList[0])))
+
     colors = cm.rainbow(np.linspace(0, 1,len(indList)))
 
     for key in paramKeys:
@@ -418,6 +419,7 @@ def plotParam(dataset,exp_id,indList,labels):
         for k,indModel in enumerate(indList):
 
             tensorPathList = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,indModel,key)),key=findNumbers)
+
             for i,tensorPath in enumerate(tensorPathList):
                 tensor[k,i] = np.genfromtxt(tensorPath)[:,0].reshape(-1)
 
@@ -434,7 +436,9 @@ def plotParam(dataset,exp_id,indList,labels):
         for k,indModel in enumerate(indList):
 
             paramsPaths = sorted(glob.glob("../models/{}/model{}_epoch*".format(exp_id,indModel)),key=findNumbers)
-
+            #print(k,indModel,len(paramsPaths),tensor.shape)
+            #for path in paramsPaths:
+            #    print(path)
             #Plot the param error as a function of the absolute value of the param
             for j in range(len(tensor[k])):
 
@@ -674,7 +678,26 @@ def getGT(dataset,gtParamDict,paramKeys):
 
     return gtParamDict[dataset]
 
-def compareWithGroundTruth(exp_id,varParams,error_metric):
+def getEpoch(paths,epoch):
+
+    if epoch == -1:
+        return sorted(paths,key=findNumbers)[-1]
+    else:
+        epochNotFound = True
+        i=0
+        while epochNotFound and i < len(paths):
+
+            if paths[i].find("epoch{}_".format(epoch)) != -1:
+                epochNotFound = False
+
+            i += 1
+
+        if epochNotFound:
+            raise ValueError("Epoch file not found for epoch",epoch,"in files : ",paths)
+        else:
+            return paths[i-1]
+
+def compareWithGroundTruth(exp_id,varParams,error_metric,epoch=-1):
     ''' Compare the parameters found by several models to the ground truth
 
     This function compute the error between parameter found and ground-truth but it also
@@ -714,7 +737,8 @@ def compareWithGroundTruth(exp_id,varParams,error_metric):
 
         paramDict = {}
         for paramName in paramKeys:
-            lastEpochPath = sorted(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,modelInd,paramName)),key=findNumbers)[-1]
+
+            lastEpochPath = getEpoch(glob.glob("../results/{}/model{}_epoch*_{}.csv".format(exp_id,modelInd,paramName)),epoch)
 
             lastEpoch = findNumbers(os.path.basename(lastEpochPath).replace("model{}".format(modelInd),""))
             paramDict[paramName] = np.genfromtxt("../results/{}/model{}_epoch{}_{}.csv".format(exp_id,modelInd,lastEpoch,paramName))
@@ -725,11 +749,11 @@ def compareWithGroundTruth(exp_id,varParams,error_metric):
         incPer = includPerc(paramDict,gtParamDict,paramKeys)
         csvInclu += "{}".format(paramValue)+"".join(["\t{}".format(round(100*incPer[i],2)) for i in range(len(incPer))])+"\n"
 
-    with open("../results/{}/err.csv".format(exp_id),"w") as text_file:
+    with open("../results/{}/err_epoch{}.csv".format(exp_id,epoch),"w") as text_file:
         print(csvHead,file=text_file)
         print(csvErr,file=text_file,end="")
 
-    with open("../results/{}/inclPerc.csv".format(exp_id),"w") as text_file:
+    with open("../results/{}/inclPerc_epoch{}.csv".format(exp_id,epoch),"w") as text_file:
         print(csvHead,file=text_file)
         print(csvInclu,file=text_file)
 
@@ -842,6 +866,19 @@ def findNumbers(x):
 
     return int((''.join(xi for xi in str(x) if xi.isdigit())))
 
+def csvToDict(csvPath):
+
+    csv = np.genfromtxt(csvPath,dtype=str)
+    csvDict = {}
+    for i in range(1,csv.shape[0]):
+        modelDict = {}
+        for j in range(1,csv.shape[1]):
+            mean,std = csv[i,j].split("\pm")
+            modelDict[csv[0,j]] = {"mean":float(mean),"std":float(std)}
+        csvDict[csv[i,0]] = modelDict
+
+    return csvDict
+
 def main(argv=None):
 
     #Getting arguments from config file and command line
@@ -852,6 +889,10 @@ def main(argv=None):
                                     be the list of parameters varying across the different models in the experiment.')
     argreader.parser.add_argument('--comp_gt_agr',type=str,nargs="*",metavar='PARAM',help='To compare the parameters found with the ground truth parameters. Require a fake dataset. The argument should\
                                     be the list of parameters varying across the different models in the experiment. The accuracies of models having the same value for those parameters will be agregated.')
+
+    argreader.parser.add_argument('--comp_gt_evol',type=str,nargs="*",metavar='PARAM',help='To plot the evolution of the error across epochs. The argument should\
+                                    be the list of parameters varying across the different models in the experiment.')
+
     argreader.parser.add_argument('--error_metric',type=str,metavar='ERROR',default="rmse",help='The error metric used in \'--comp_gt\' and \'--comp_gt_agr\'. Can be \'rmse\' or \'relative\'. Default is \'RMSE\'.')
 
     argreader.parser.add_argument('--artif_data',action='store_true',help='To plot the real and empirical distribution of the parameters of a fake dataset. \
@@ -898,8 +939,41 @@ def main(argv=None):
         compareWithGroundTruth(args.exp_id,args.comp_gt,args.error_metric)
     if args.comp_gt_agr:
         compareWithGroundTruth(args.exp_id,args.comp_gt_agr,args.error_metric)
-        agregateCpWGroundTruth(args.exp_id,"../results/{}/err.csv".format(args.exp_id))
-        agregateCpWGroundTruth(args.exp_id,"../results/{}/inclPerc.csv".format(args.exp_id))
+        agregateCpWGroundTruth(args.exp_id,"../results/{}/err_epoch-1.csv".format(args.exp_id))
+        agregateCpWGroundTruth(args.exp_id,"../results/{}/inclPerc_epoch-1.csv".format(args.exp_id))
+
+    if args.comp_gt_evol:
+
+        #Find an id of one model in the experiment
+        modelInd = findNumbers(os.path.basename(sorted(glob.glob("../models/{}/model*.ini".format(args.exp_id)))[0]))
+        #The list of epoch number that have been logged
+        epochs = sorted(list(map(lambda x:findNumbers(os.path.basename(x).split("_")[1]),glob.glob("../results/{}/model{}_epoch*_{}.csv".format(args.exp_id,modelInd,paramKeys[0])))))
+        epochs = np.array(epochs)
+
+        csvDict = {}
+        for epoch in epochs:
+            if not os.path.exists("../results/{}/err_epoch{}_agreg.csv".format(args.exp_id,epoch)):
+                compareWithGroundTruth(args.exp_id,args.comp_gt_evol,args.error_metric,epoch=epoch)
+                agregateCpWGroundTruth(args.exp_id,"../results/{}/err_epoch{}.csv".format(args.exp_id,epoch))
+            csvDict[epoch] = csvToDict("../results/{}/err_epoch{}_agreg.csv".format(args.exp_id,epoch))
+
+        #Collect the values of the varying hyper parameters:
+        #These values identifie the models from each other
+        varHyperParamValues = csvDict[list(csvDict.keys())[0]].keys()
+
+        for param in paramKeys:
+            print("Ploting ",param)
+            plt.figure()
+
+            for i,hyperParam in enumerate(varHyperParamValues):
+
+                points = list(map(lambda x:csvDict[x][hyperParam][param]['mean'],epochs))
+                stds = list(map(lambda x:csvDict[x][hyperParam][param]['std'],epochs))
+
+                plt.errorbar(epochs+100*i,points,yerr=stds,label="{}={}".format(args.comp_gt_evol,hyperParam))
+
+            plt.legend()
+            plt.savefig("../vis/{}/err_evol_{}.png".format(args.exp_id,param))
 
     if args.artif_data:
         fakeDataDIstr(args)
