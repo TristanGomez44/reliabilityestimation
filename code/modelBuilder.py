@@ -386,10 +386,9 @@ class MLE(nn.Module):
         Returns
             the loss with the prior terms added
         '''
-
         for param in self.disDict.keys():
             procFunc = self.paramProc[param]
-            loss -= self.disDict[param].log_prob(procFunc(getattr(self,param))).sum()
+            loss -= self.disDict[param].log_prob(procFunc(getattr(self,param).float())).sum().double()
 
         return loss
 
